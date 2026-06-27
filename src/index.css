@@ -20,3 +20,76 @@
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: rgba(34, 211, 238, 0.4);
 }
+
+/* Custom Stark Industries HUD Border Aesthetics directly corresponding to User Image */
+.stark-cyber-panel {
+  position: relative;
+  background: rgba(15, 23, 42, 0.25);
+  border: 1px solid rgba(6, 182, 212, 0.12);
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.03);
+  backdrop-filter: blur(16px);
+  border-radius: 1rem; /* rounded-2xl */
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Top Corner neon ornaments */
+.stark-cyber-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid rgba(34, 211, 238, 0.85);
+  border-left: 2px solid rgba(34, 211, 238, 0.85);
+  border-top-left-radius: 1rem;
+  pointer-events: none;
+  box-shadow: -1px -1px 5px rgba(34, 211, 238, 0.2);
+}
+
+.stark-cyber-panel::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid rgba(34, 211, 238, 0.85);
+  border-right: 2px solid rgba(34, 211, 238, 0.85);
+  border-top-right-radius: 1rem;
+  pointer-events: none;
+  box-shadow: 1px -1px 5px rgba(34, 211, 238, 0.2);
+}
+
+/* Optional Bottom cyber-corners helper utility */
+.stark-cyber-bottom-decor {
+  position: relative;
+}
+
+.stark-cyber-bottom-decor::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-bottom: 2px solid rgba(34, 211, 238, 0.85);
+  border-left: 2px solid rgba(34, 211, 238, 0.85);
+  border-bottom-left-radius: 1rem;
+  pointer-events: none;
+  box-shadow: -1px 1px 5px rgba(34, 211, 238, 0.2);
+}
+
+.stark-cyber-bottom-decor::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  border-bottom: 2px solid rgba(34, 211, 238, 0.85);
+  border-right: 2px solid rgba(34, 211, 238, 0.85);
+  border-bottom-right-radius: 1rem;
+  pointer-events: none;
+  box-shadow: 1px 1px 5px rgba(34, 211, 238, 0.2);
+}

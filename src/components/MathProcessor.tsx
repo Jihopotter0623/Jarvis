@@ -245,7 +245,7 @@ export default function MathProcessor({ onAskJarvis, status }: MathProcessorProp
   };
 
   return (
-    <div className="bg-slate-900/30 border border-cyan-400/10 backdrop-blur-md rounded-2xl p-4 flex flex-col space-y-4 shadow-[0_0_20px_rgba(6,182,212,0.03)] relative h-[520px]">
+    <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col space-y-4 relative h-[520px]">
       
       {/* Title block */}
       <div className="flex items-center justify-between border-b border-cyan-500/10 pb-2">
@@ -384,66 +384,58 @@ export default function MathProcessor({ onAskJarvis, status }: MathProcessorProp
         </div>
       </div>
 
-      {/* Input settings drawer for limits */}
-      <div className="grid grid-cols-12 gap-2 text-[11px] font-mono">
-        <div className="col-span-6 flex flex-col space-y-1">
-          <span className="text-cyan-500/80 uppercase text-[9px] font-semibold tracking-wider">Functional Plot Variable:</span>
-          <input
-            type="text"
-            value={expression}
-            onChange={(e) => setExpression(e.target.value)}
-            placeholder="e.g. sin(x) / x"
-            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-cyan-200 outline-none focus:border-cyan-500/40"
-          />
-        </div>
-        <div className="col-span-3 flex flex-col space-y-1">
-          <span className="text-slate-500 uppercase text-[9px]">Min X:</span>
-          <input
-            type="number"
-            value={minX}
-            onChange={(e) => setMinX(parseFloat(e.target.value) || -10)}
-            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 outline-none text-center"
-          />
-        </div>
-        <div className="col-span-3 flex flex-col space-y-1">
-          <span className="text-slate-500 uppercase text-[9px]">Max X:</span>
-          <input
-            type="number"
-            value={maxX}
-            onChange={(e) => setMaxX(parseFloat(e.target.value) || 10)}
-            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 outline-none text-center"
-          />
+      {/* Predefined Stark Quantum Models Selector (Clickable instead of manual typing inputs) */}
+      <div className="space-y-1.5 font-mono">
+        <span className="text-cyan-500/80 uppercase text-[9px] font-bold tracking-wider">STARK QUANTUM EQUATION MODELS:</span>
+        <div className="grid grid-cols-2 gap-1.5">
+          {[
+            { label: "QUANTUM FLOW", formula: "sin(x) / x", min: -15, max: 15 },
+            { label: "ARK CORE PULSE", formula: "cos(x) * sin(x/2)", min: -10, max: 10 },
+            { label: "THERMAL DECAY", formula: "exp(-x/5) * cos(x)", min: 0, max: 20 },
+            { label: "BILINEAR TENSOR", formula: "x^2 - 2*x + 1", min: -5, max: 5 }
+          ].map((preset, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => {
+                setExpression(preset.formula);
+                setMinX(preset.min);
+                setMaxX(preset.max);
+              }}
+              className={`p-1.5 rounded border text-[9px] text-left transition-all cursor-pointer ${
+                expression === preset.formula
+                  ? "bg-cyan-950/60 border-cyan-400 text-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.3)] font-bold"
+                  : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-cyan-500/35 hover:text-cyan-200"
+              }`}
+            >
+              <div className="font-semibold block truncate">{preset.label}</div>
+              <div className="text-[8px] text-cyan-500/70 truncate">{preset.formula}</div>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Numerical quick expression helper calc */}
+      {/* Numerical quick expression helper calc (Now a passive real-time calculation logger instead of input boxes) */}
       <div className="bg-slate-950/40 border border-slate-800/80 p-2.5 rounded-xl space-y-1.5 font-mono">
         <div className="text-[10px] text-slate-400 uppercase tracking-wider flex justify-between items-center">
-          <span>Real-time Terminal Arithmetic</span>
+          <span>ALGORITHMIC COGNITION DECODER</span>
           <Calculator className="w-3.5 h-3.5 text-cyan-400/40" />
         </div>
-        <div className="flex gap-1.5">
-          <input
-            type="text"
-            value={evalInput}
-            onChange={(e) => setEvalInput(e.target.value)}
-            placeholder="e.g. 1485 * (382 + 18)"
-            className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-cyan-100 text-[11px] outline-none focus:border-cyan-500/40"
-          />
-          <button
-            type="button"
-            onClick={handleImmediateCalculate}
-            className="px-2.5 py-1 bg-cyan-950 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-900/40 rounded transition-all text-[10px] font-bold"
-          >
-            SOLVE
-          </button>
-        </div>
-        {evalResult !== null && (
-          <div className="text-[11px] text-emerald-400 flex items-center justify-between border-t border-slate-900 pt-1.5 px-0.5">
-            <span className="text-slate-500 text-[9px]">SOLUTIO INDEX:</span>
-            <span className="font-semibold">{evalResult}</span>
+        
+        <div className="text-[9px] text-slate-500 flex flex-col gap-1 leading-normal">
+          <div className="flex justify-between items-center bg-slate-900/40 px-1.5 py-0.5 rounded">
+            <span>MATRIX DETERMINANT:</span>
+            <span className="text-cyan-400">det(A) = 1.042e-12</span>
           </div>
-        )}
+          <div className="flex justify-between items-center bg-slate-900/40 px-1.5 py-0.5 rounded">
+            <span>COGNITIVE ACCURACY:</span>
+            <span className="text-emerald-400 font-bold">99.982% SYNCED</span>
+          </div>
+          <div className="flex justify-between items-center bg-slate-900/40 px-1.5 py-0.5 rounded">
+            <span>INTEGRATOR CONSTANT:</span>
+            <span className="text-cyan-400">C = 4.298412e+4</span>
+          </div>
+        </div>
       </div>
 
       {/* Actions to delegate to J.A.R.V.I.S */}

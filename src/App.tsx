@@ -24,13 +24,18 @@ import {
   Eye,
   EyeOff,
   Calculator,
+  Headphones,
+  Image,
 } from "lucide-react";
 import ArcReactor from "./components/ArcReactor";
 import AudioVisualizer from "./components/AudioVisualizer";
-import JarvisConsole, { ChatMessage } from "./components/JarvisConsole";
-import { getSpeechRecognition, speakWithBrowser, playRawPCM } from "./utils/audio";
+import { ChatMessage } from "./components/JarvisConsole";
+import { getSpeechRecognition, speakWithBrowser, playRawPCM, playBootSound } from "./utils/audio";
 import MathProcessor from "./components/MathProcessor";
 import HolographicYoutubePlayer from "./components/HolographicYoutubePlayer";
+import HolographicMediaLoader from "./components/HolographicMediaLoader";
+import HolographicMap from "./components/HolographicMap";
+import ClapSensor from "./components/ClapSensor";
 
 export interface ScheduleItem {
   id: string;
@@ -43,6 +48,12 @@ export interface ScheduleItem {
 export default function App() {
   // System configurations
   const [initialized, setInitialized] = useState(false);
+  const [revealStep, setRevealStep] = useState<number>(0);
+  const [isBooting, setIsBooting] = useState(false);
+  const [bootProgress, setBootProgress] = useState(0);
+  const [bootLogs, setBootLogs] = useState<string[]>([]);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
   const [userName, setUserName] = useState(() => localStorage.getItem("jarvis_user_name") || "Mr. Stark");
   const [userGender, setUserGender] = useState<"male" | "female">(
     () => (localStorage.getItem("jarvis_user_gender") as "male" | "female") || "male"
@@ -55,6 +66,9 @@ export default function App() {
   );
   const [inputLanguage, setInputLanguage] = useState<"ko-KR" | "en-US">(
     () => (localStorage.getItem("jarvis_input_lang") as "ko-KR" | "en-US") || "ko-KR"
+  );
+  const [translateKToEMode, setTranslateKToEMode] = useState<boolean>(
+    () => localStorage.getItem("jarvis_translate_ktoe_mode") === "true"
   );
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>(() => {
@@ -87,6 +101,16 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("jarvis_input_lang", inputLanguage);
   }, [inputLanguage]);
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_translate_ktoe_mode", String(translateKToEMode));
+    if (translateKToEMode) {
+      setInputLanguage("ko-KR");
+      setContinuousVoiceMode(true);
+      setAlwaysListeningEn(true);
+      setBypassWakeWord(true);
+    }
+  }, [translateKToEMode]);
 
   useEffect(() => {
     localStorage.setItem("jarvis_schedules", JSON.stringify(schedules));
@@ -156,12 +180,66 @@ export default function App() {
   // Manual schedule input states
   const [manualTime, setManualTime] = useState("");
   const [manualTask, setManualTask] = useState("");
-  const [rightPanelMode, setRightPanelMode] = useState<"schedule" | "math">("math");
+  const [rightPanelMode, setRightPanelMode] = useState<"schedule" | "math" | "media">("math");
 
   // YouTube Media States
   const [activeYoutubeQuery, setActiveYoutubeQuery] = useState<string | null>(null);
   const [youtubePlayType, setYoutubePlayType] = useState<"song" | "channel" | null>(null);
   const [isYoutubeMinimized, setIsYoutubeMinimized] = useState<boolean>(false);
+
+  // Google Maps States
+  const [activeMapQuery, setActiveMapQuery] = useState<string | null>(null);
+  const [isMapMinimized, setIsMapMinimized] = useState<boolean>(false);
+
+  // Offline Audio Autoplay trigger count
+  const [autoPlayOfflineCount, setAutoPlayOfflineCount] = useState<number>(0);
+
+  // Specific Direct Track Force Play state (e.g., AC/DC Back in Black offline)
+  const [forceDirectTrackId, setForceDirectTrackId] = useState<string | null>(null);
+
+  // Acoustic Double Clap Trigger states
+  const [clapWakeEnabled, setClapWakeEnabled] = useState<boolean>(true);
+  const [clapSensitivity, setClapSensitivity] = useState<number>(6); // Default sensitivity 6/10
+  const [hasWelcomedClap, setHasWelcomedClap] = useState<boolean>(false);
+  const hasWelcomedClapRef = useRef<boolean>(false);
+  const initialClapTriggeredRef = useRef<boolean>(false);
+
+  // Real-time Always Listening wake word states
+  const [alwaysListeningEn, setAlwaysListeningEn] = useState<boolean>(
+    () => localStorage.getItem("jarvis_always_listening") !== "false"
+  );
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_always_listening", alwaysListeningEn.toString());
+  }, [alwaysListeningEn]);
+
+  // Bypass wake word: directly hear commands without saying "자비스 / Jarvis" (Enabled by default based on operator request)
+  const [bypassWakeWord, setBypassWakeWord] = useState<boolean>(
+    () => localStorage.getItem("jarvis_bypass_wakeword") !== "false"
+  );
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_bypass_wakeword", bypassWakeWord.toString());
+  }, [bypassWakeWord]);
+
+  const manualPauseListeningRef = useRef<boolean>(false);
+
+  // Continuous conversational mic stream loop states & active tracking references
+  const [continuousVoiceMode, setContinuousVoiceMode] = useState<boolean>(false);
+  const continuousVoiceModeRef = useRef(continuousVoiceMode);
+  useEffect(() => {
+    continuousVoiceModeRef.current = continuousVoiceMode;
+  }, [continuousVoiceMode]);
+
+  const isListeningRef = useRef(isListening);
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
+
+  // STT stream buffers & anti-cutoff timer references
+  const sttTranscriptRef = useRef<string>("");
+  const sttTimeoutRef = useRef<any>(null);
+  const hasSubmittedRef = useRef<boolean>(false);
 
   // Dynamic clock state updated every second
   const [currentLocalTime, setCurrentLocalTime] = useState<Date>(new Date());
@@ -232,9 +310,15 @@ export default function App() {
     statusRef.current = status;
   }, [status]);
 
-  // Voice-activated Jarvis (자비스) wake-up system when in Sleep Standby
+  // Voice-activated Jarvis (자비스) continuous wake-word & attention system
   useEffect(() => {
-    if (!initialized || !isScreenSleep) return;
+    if (!initialized) return;
+
+    // We only trigger this wake detector if:
+    // 1. isScreenSleep is true OR
+    // 2. alwaysListeningEn is true, status is "idle", isListening is false, and bypassWakeWord is false
+    const shouldWakeListen = isScreenSleep || (alwaysListeningEn && status === "idle" && !isListening && !bypassWakeWord);
+    if (!shouldWakeListen) return;
 
     let wakeRecognition: any = null;
     let active = true;
@@ -247,65 +331,115 @@ export default function App() {
       wakeRecognition = recognition;
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = inputLanguage; // Dynamically follow preference ko-KR / en-US
+      recognition.lang = inputLanguage; // ko-KR or en-US
 
       recognition.onstart = () => {
-        console.log("🎙️ [Stealth Wake-Word Detector Active - listening for '자비스' / 'Jarvis']");
+        console.log(`🎙️ [Persistent Mic Active - Always Listening for '자비스' / 'Jarvis'] (Status: ${status}, Sleep: ${isScreenSleep})`);
       };
 
       recognition.onresult = (event: any) => {
         if (!active) return;
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const transcript = event.results[i][0].transcript.toLowerCase().trim();
-          console.log(`[Stealth STT Buffer]: "${transcript}"`);
-          
-          // Match wake word phonetically in Korean and English
-          const containsWakeWord = 
-            transcript.includes("자비스") || 
-            transcript.includes("jarvis") || 
-            transcript.includes("자비수") || 
-            transcript.includes("잡이스") || 
-            transcript.includes("자비쓰") || 
-            transcript.includes("하비수") ||
-            transcript.includes("자비스야") ||
-            transcript.includes("사비스");
+          const rawTranscript = event.results[i][0].transcript;
+          const transcript = rawTranscript.toLowerCase().trim();
+          const cleanTranscript = transcript.replace(/\s+/g, ""); // Remove spaces for super high sensitivity
+          console.log(`[Always-Listening Continuous Buffer]: "${transcript}" (clean: "${cleanTranscript}")`);
 
-          if (containsWakeWord) {
-            console.log("✨ [WAKE WORD MATCHED! Restoring core UI]");
-            setIsScreenSleep(false);
+          const wakeWords = [
+            "자비스", "자비쓰", "잡이스", "하비수", "사비스", "차비스", "타비스", "자비수", 
+            "쟈비스", "자비서", "접이스", "바이스", "자빗", "차비소", "야자비스", "자비", 
+            "서비스", "서비수", "디바이스", "지바이스", "비서", "다비스", "좌비스", "쟙이스", 
+            "쟙스", "잡스", "재비스", "제비스", "자비스야", "하비스", "자베스",
+            "jarvis", "travis", "javis", "jarves", "jarv", "jervis", "garvis", "arvis", "charvis"
+          ];
+          
+          let matchedWord = "";
+          for (const word of wakeWords) {
+            if (cleanTranscript.includes(word)) {
+              matchedWord = word;
+              break;
+            }
+          }
+
+          if (matchedWord) {
+            console.log(`✨ [WAKE WORD MATCHED via "${matchedWord}"!]`);
+            setContinuousVoiceMode(true); // Activate persistent continuous convo mode
             
-            const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-            speakOutput(`Yes ${userHonorific}, J.A.R.V.I.S. protocol is active. Core systems are fully online and ready.`);
-            setErrorNotice("🎙️ Wake word detected: Screen restored in online mode.");
+            // 1. If screen is asleep, restore it!
+            if (isScreenSleep) {
+              setIsScreenSleep(false);
+              const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+              speakOutput(`Yes ${userHonorific}, J.A.R.V.I.S. protocol is active. Core systems are fully online and ready.`);
+              setErrorNotice("🎙️ Wake word detected: Screen restored in online mode. Continuous dialog loop engaged.");
+              active = false;
+              try { recognition.stop(); } catch (e) {}
+              break;
+            }
+
+            // 2. If screen is already awake, let's extract the command or trigger active listening
+            // Build space-insensitive regex to capture the exact matched part of raw transcript
+            const regexStr = matchedWord.split("").map(char => {
+              return char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\s*";
+            }).join("");
+            const regex = new RegExp(regexStr, "i");
+            const match = transcript.match(regex);
             
+            let afterWord = "";
+            if (match) {
+              const matchedSegmentOnTranscript = match[0];
+              const index = transcript.indexOf(matchedSegmentOnTranscript);
+              afterWord = transcript.substring(index + matchedSegmentOnTranscript.length).trim();
+            } else {
+              // Fallback
+              const index = transcript.indexOf(matchedWord);
+              if (index !== -1) {
+                afterWord = transcript.substring(index + matchedWord.length).trim();
+              }
+            }
+
             active = false;
-            try {
-              recognition.stop();
-            } catch (e) {}
+            try { recognition.stop(); } catch (e) {}
+
+            if (afterWord.length > 1) {
+              // They said Jarvis + the command right away!
+              console.log(`[Jarvis Continuous] Executing direct inline command: "${afterWord}"`);
+              handleSubmitPrompt(afterWord);
+            } else {
+              // They just said "자비스".
+              console.log("[Jarvis Continuous] Wake word heard with no command. Triggering speech capture feedback loop.");
+              const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+              const alertMsg = `At your service, ${userHonorific}. Go ahead.`;
+              speakOutput(alertMsg);
+              setErrorNotice(inputLanguage === "ko-KR"
+                ? `🎙️ 자비스: 예 주인님, 말씀하십시오.`
+                : `🎙️ JARVIS: Yes, ${userHonorific}. Continuous voice interceptor is active.`);
+            }
             break;
           }
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.warn("Stealth wake detector error:", event.error);
+        console.warn("Persistent wake detector error:", event.error);
         if (event.error === "aborted") return;
         
-        // Auto-restart on transience
+        // Auto-restart on transient errors
         setTimeout(() => {
-          if (active && isScreenSleep) {
+          if (active && (isScreenSleep || (alwaysListeningEn && statusRef.current === "idle" && !isListening))) {
             startWakeWordDetector();
           }
         }, 1500);
       };
 
       recognition.onend = () => {
-        if (active && isScreenSleep) {
+        if (active && (isScreenSleep || (alwaysListeningEn && statusRef.current === "idle" && !isListening))) {
           try {
             recognition.start();
           } catch (e) {
             setTimeout(() => {
-              if (active && isScreenSleep) startWakeWordDetector();
+              if (active && (isScreenSleep || (alwaysListeningEn && statusRef.current === "idle" && !isListening))) {
+                startWakeWordDetector();
+              }
             }, 1000);
           }
         }
@@ -314,7 +448,7 @@ export default function App() {
       try {
         recognition.start();
       } catch (err) {
-        console.error("Failed to start wake recognition:", err);
+        console.error("Failed to start persistent wake recognition:", err);
       }
     }
 
@@ -328,7 +462,63 @@ export default function App() {
         } catch (e) {}
       }
     };
-  }, [initialized, isScreenSleep, inputLanguage, userGender]);
+  }, [initialized, isScreenSleep, alwaysListeningEn, bypassWakeWord, status, isListening, inputLanguage, userGender]);
+
+  // Effect to automatically start active continuous microphone if bypassWakeWord (No Wake Word) mode is active and system is idle
+  useEffect(() => {
+    if (!initialized) return;
+    if (isScreenSleep) return;
+    if (manualPauseListeningRef.current) return;
+
+    if (alwaysListeningEn && bypassWakeWord && status === "idle" && !isListening) {
+      if (!continuousVoiceMode) {
+        setContinuousVoiceMode(true);
+      }
+      const timer = setTimeout(() => {
+        if (statusRef.current === "idle" && !isListeningRef.current && !manualPauseListeningRef.current) {
+          console.log("🎙️ [Bypass Wake Word Mode]: Automatically starting direct continuous microphone...");
+          startVoiceInputExplicit();
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [initialized, alwaysListeningEn, bypassWakeWord, status, isListening, isScreenSleep, continuousVoiceMode]);
+
+  // Double Clap wake/attention handler
+  const handleDoubleClapWake = () => {
+    console.log("⚡ [Double Clap Acoustic Wave Triggered!]");
+    
+    if (!hasWelcomedClapRef.current) {
+      hasWelcomedClapRef.current = true;
+      setHasWelcomedClap(true);
+      const greetingText = "Welcome home, sir.";
+      
+      // Add the visual feedback message to J.A.R.V.I.S console streams
+      const welcomeMsg: ChatMessage = {
+        id: `m_${Date.now()}_double_clap_welcome`,
+        role: "jarvis",
+        text: greetingText,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, welcomeMsg]);
+
+      // Speak using the high-tech vocal synthesis engine
+      speakOutput(greetingText);
+
+      setErrorNotice(inputLanguage === "ko-KR"
+        ? "👏 이중 박수 감지: Welcome home, sir!"
+        : "👏 Double clap detected: Welcome home, sir!");
+    } else {
+      // Subsequent triggers: just notify the user without talking back
+      setErrorNotice(inputLanguage === "ko-KR"
+        ? "👏 이중 박수 감지"
+        : "👏 Double clap detected");
+    }
+
+    if (isScreenSleep) {
+      setIsScreenSleep(false);
+    }
+  };
 
   // Clean active speech playback/transmissions
   const stopAllAudio = () => {
@@ -352,6 +542,134 @@ export default function App() {
       activeAudioContextRef.current = null;
     }
     setStatus("idle");
+  };
+
+  // Starts STT recognition directly and sets listening state
+  const startVoiceInputExplicit = () => {
+    if (isListeningRef.current) return;
+    const recognition = getSpeechRecognition();
+
+    if (!recognition) {
+      setErrorNotice("Speech Recognition API is not supported in this browser. Please type keywords.");
+      return;
+    }
+
+    recognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = inputLanguage;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      setStatus("listening");
+      setTransitText("");
+      sttTranscriptRef.current = "";
+      hasSubmittedRef.current = false;
+      if (sttTimeoutRef.current) {
+        clearTimeout(sttTimeoutRef.current);
+        sttTimeoutRef.current = null;
+      }
+    };
+
+    recognition.onresult = (event: any) => {
+      let interimTranscript = "";
+      let finalTranscript = "";
+
+      for (let i = 0; i < event.results.length; ++i) {
+        const text = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += text + " ";
+        } else {
+          interimTranscript += text;
+        }
+      }
+
+      const combined = (finalTranscript.trim() + " " + interimTranscript.trim()).trim();
+      if (combined) {
+        setTransitText(combined);
+        sttTranscriptRef.current = combined;
+
+        // Clear existing submit timer
+        if (sttTimeoutRef.current) {
+          clearTimeout(sttTimeoutRef.current);
+        }
+
+        // Set a debounce timer. If there is a silence of 2000ms, auto-submit.
+        sttTimeoutRef.current = setTimeout(() => {
+          if (!hasSubmittedRef.current && sttTranscriptRef.current.trim()) {
+            hasSubmittedRef.current = true;
+            setIsListening(false);
+            setTransitText("");
+            try {
+              recognition.stop();
+            } catch (e) {}
+            handleSubmitPrompt(sttTranscriptRef.current.trim());
+          }
+        }, 2000);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("STT sequence error:", event.error);
+      setIsListening(false);
+      setStatus("idle");
+    };
+
+    recognition.onend = () => {
+      if (sttTimeoutRef.current) {
+        clearTimeout(sttTimeoutRef.current);
+        sttTimeoutRef.current = null;
+      }
+
+      // If the browser natively ended the audio stream but we haven't submitted yet
+      if (!hasSubmittedRef.current) {
+        const finalClean = sttTranscriptRef.current.trim();
+        if (finalClean) {
+          hasSubmittedRef.current = true;
+          setIsListening(false);
+          setTransitText("");
+          handleSubmitPrompt(finalClean);
+        } else {
+          setIsListening(false);
+          if (statusRef.current === "listening") {
+            setStatus("idle");
+          }
+        }
+      } else {
+        setIsListening(false);
+        if (statusRef.current === "listening") {
+          setStatus("idle");
+        }
+      }
+      
+      // Auto-restart microphone if in continuous conversation mode and not thinking/speaking
+      if (continuousVoiceModeRef.current) {
+        setTimeout(() => {
+          if (continuousVoiceModeRef.current && statusRef.current === "idle" && !isListeningRef.current) {
+            console.log("[Jarvis Loop] Auto-resuming listener after unexpected silence/disconnect.");
+            startVoiceInputExplicit();
+          }
+        }, 300);
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (err) {
+      console.error("Failed to start voice:", err);
+    }
+  };
+
+  const handleSpeechFinished = () => {
+    setStatus("idle");
+    if (continuousVoiceModeRef.current) {
+      console.log("[Jarvis Continuous Convo] Conversation active. Re-triggering microphone...");
+      setTimeout(() => {
+        if (continuousVoiceModeRef.current && statusRef.current === "idle" && !isListeningRef.current) {
+          startVoiceInputExplicit();
+        }
+      }, 400); // 400ms pause so there is a natural rhythm and no microphone chime clipping
+    }
   };
 
   // Speaks output text based on chosen speech engine
@@ -388,7 +706,7 @@ export default function App() {
           activeAudioSourceRef.current = source;
           
           source.onended = () => {
-            setStatus("idle");
+            handleSpeechFinished();
           };
         } else {
           throw new Error("No premium audio data returned");
@@ -402,7 +720,7 @@ export default function App() {
       triggerBrowserSpeech(textToRead);
     } else {
       // Silent
-      setStatus("idle");
+      handleSpeechFinished();
     }
   };
 
@@ -411,20 +729,165 @@ export default function App() {
       pitch: browserPitch,
       rate: browserRate,
       voiceName: selectedBrowserVoice,
-      onEnd: () => setStatus("idle"),
-      onError: () => setStatus("idle"),
+      onEnd: () => handleSpeechFinished(),
+      onError: () => handleSpeechFinished(),
     });
     activeUtteranceRef.current = utterance;
   };
 
-  // Boot JARVIS core system & play initial welcome greetings
-  const initializeSystem = () => {
-    setInitialized(true);
-    stopAllAudio();
+  // Check active schedules every second to see if scheduled times match current local time
+  useEffect(() => {
+    const isTimeToTrigger = (timeStr: string, now: Date): boolean => {
+      const normalized = timeStr.toLowerCase().replace(/\s+/g, "");
+      const currentHr24 = now.getHours();
+      const currentMin = now.getMinutes();
+
+      // Try format 1: HH:MM with optional AM/PM or Korean marking
+      // e.g. "14:30", "04:30PM", "오후4:35"
+      const hhMmMatch = normalized.match(/(\d{1,2}):(\d{2})/);
+      if (hhMmMatch) {
+        let sh = parseInt(hhMmMatch[1], 10);
+        const sm = parseInt(hhMmMatch[2], 10);
+        
+        const isPmMarker = normalized.includes("pm") || normalized.includes("오후");
+        const isAmMarker = normalized.includes("am") || normalized.includes("오전");
+        
+        if (isPmMarker && sh < 12) {
+          sh += 12;
+        } else if (isAmMarker && sh === 12) {
+          sh = 0;
+        }
+        
+        if (sh === currentHr24 && sm === currentMin) {
+          return true;
+        }
+        if (!isPmMarker && !isAmMarker && sh < 12 && (sh + 12) === currentHr24 && sm === currentMin) {
+          return true;
+        }
+        return false;
+      }
+
+      // Try format 2: "X시 Y분" or "X시"
+      // e.g. "오후2시30분", "3시"
+      const koMatch = normalized.match(/(\d{1,2})시(\d{1,2})?분?/);
+      if (koMatch) {
+        let sh = parseInt(koMatch[1], 10);
+        const sm = koMatch[2] ? parseInt(koMatch[2], 10) : 0;
+        
+        const isPmMarker = normalized.includes("오후") || normalized.includes("pm");
+        const isAmMarker = normalized.includes("오전") || normalized.includes("am");
+        
+        if (isPmMarker && sh < 12) {
+          sh += 12;
+        } else if (isAmMarker && sh === 12) {
+          sh = 0;
+        }
+        
+        if (sh === currentHr24 && sm === currentMin) {
+          return true;
+        }
+        if (!isPmMarker && !isAmMarker && sh < 12 && (sh + 12) === currentHr24 && sm === currentMin) {
+          return true;
+        }
+        return false;
+      }
+
+      // Try format 3: "Xpm" or "Xam"
+      const enMatch = normalized.match(/(\d{1,2})(pm|am)/);
+      if (enMatch) {
+        let sh = parseInt(enMatch[1], 10);
+        const sm = 0;
+        const isPm = enMatch[2] === "pm";
+        
+        if (isPm && sh < 12) {
+          sh += 12;
+        } else if (!isPm && sh === 12) {
+          sh = 0;
+        }
+        
+        return sh === currentHr24 && sm === currentMin;
+      }
+
+      return false;
+    };
+
+    // Only query incomplete schedules
+    const activePendingSchedules = schedules.filter(item => !item.completed);
+    if (activePendingSchedules.length === 0) return;
+
+    activePendingSchedules.forEach(item => {
+      if (isTimeToTrigger(item.time, currentLocalTime)) {
+        console.log(`⏰ [JARVIS Schedule Triggered]: ${item.task} at ${item.time}`);
+        
+        // 1. Mark schedule as completed immediately to prevent double-firing
+        setSchedules(prev =>
+          prev.map(s => s.id === item.id ? { ...s, completed: true } : s)
+        );
+
+        // 2. Open media component and force play Stark Grid (Offline)
+        setRightPanelMode("media");
+        setForceDirectTrackId("stark_grid");
+
+        // 3. Construct a beautiful message in JARVIS Console
+        const isKorean = inputLanguage === "ko-KR" || /[\uac00-\ud7af]/.test(item.task);
+        const alertText = isKorean
+          ? `[알람 설정 시간 도달] 주인님, 약속하신 시간(${item.time})이 되어 예정된 '${item.task}' 일정을 활성화합니다. 오프라인 메인폰 백업 시스템을 통해 고전압 오디오인 'Stark Grid Core Loop'를 즉시 음향 스테이션에 가동하겠습니다!`
+          : `[SCHEDULE ALERT] Sir, the scheduled time (${item.time}) has been reached for '${item.task}'. Empowering high-voltage playback channel: 'Stark Grid Core Loop' offline backup master loop is now active.`;
+
+        const alertMsg: ChatMessage = {
+          id: `m_alert_${Date.now()}_${item.id}`,
+          role: "jarvis",
+          text: alertText,
+          timestamp: new Date()
+        };
+
+        setMessages(prev => [...prev, alertMsg]);
+        setStatus("idle");
+
+        // Speak the confirmation text via selected voice synthesizer
+        speakOutput(alertText);
+      }
+    });
+  }, [currentLocalTime, schedules, inputLanguage, setSchedules, speakOutput]);
+
+  // Acoustic sequential wake trigger: register double clap initially, reveal modules one by one
+  const handleInitialClapWake = () => {
+    if (revealStep > 0 || initialClapTriggeredRef.current) return; // Prevent raw multi-triggers
+    initialClapTriggeredRef.current = true;
+
+    hasWelcomedClapRef.current = true;
+    setHasWelcomedClap(true);
+
+    // Explicitly set language to English and set premium voice engine on first start as requested
+    setInputLanguage("en-US");
+    localStorage.setItem("jarvis_input_lang", "en-US");
     
+    setVoiceEngine("premium");
+    localStorage.setItem("jarvis_voice_engine", "premium");
+
+    stopAllAudio();
+    playBootSound();
+    setRevealStep(1);
+    setInitialized(true);
+
+    // Step 2 (Delay 1.2s): Central Console screen fades/glows in
     setTimeout(() => {
-      const honorificWord = userGender === "female" ? "Ma'am" : "Sir";
-      const primaryWelcome = `JARVIS mainframe loaded at one-hundred percent capacity. All security parameters clear. Good day, ${honorificWord}. Speak or type in English, and I will execute the sequence.`;
+      setRevealStep(2);
+      playBootSound();
+    }, 1200);
+
+    // Step 3 (Delay 2.4s): Right panel (Math/Scheduler matrix) slides in
+    setTimeout(() => {
+      setRevealStep(3);
+      playBootSound();
+    }, 2400);
+
+    // Step 4 (Delay 3.6s): Set state to complete, play active greetings
+    setTimeout(() => {
+      setRevealStep(4);
+      playBootSound();
+
+      const primaryWelcome = "Welcome home, sir.";
       
       const setupMsg: ChatMessage = {
         id: "sys_init_welcome",
@@ -434,7 +897,12 @@ export default function App() {
       };
       setMessages([setupMsg]);
       speakOutput(primaryWelcome);
-    }, 400);
+    }, 3600);
+  };
+
+  // Boot JARVIS core system & play initial welcome greetings
+  const initializeSystem = () => {
+    handleInitialClapWake();
   };
 
   // Offline Backup response processor for 429 Quota resilience
@@ -444,8 +912,49 @@ export default function App() {
     // Simulate thinking delay for nice terminal scanning effect
     setTimeout(() => {
       const lowerText = text.toLowerCase().trim();
-      let reply = "";
+      const cleanLowerText = lowerText.replace(/\s+/g, "");
       const containsKo = /[\uac00-\ud7af]/.test(text);
+
+      if (translateKToEMode) {
+        const reply = `[TRANSLATION CORE OFFLINE] Sir, real-time Korean-to-English translation requires our online semantic link. You are currently operating on offline backup chips. Please enter a custom GEMINI_API_KEY in the Settings menu to activate unlimited translation. Received: "${text}"`;
+        const jarvisMsg: ChatMessage = {
+          id: `m_${Date.now()}_offline_trans`,
+          role: "jarvis",
+          text: reply,
+          timestamp: new Date()
+        };
+        setMessages((prev) => [...prev, jarvisMsg]);
+        setStatus("idle");
+        speakOutput(reply);
+        return;
+      }
+
+      // Check if it is the AC/DC track playing query
+      const isAcdcTrack = cleanLowerText.includes("backinblack") || cleanLowerText.includes("ac/dc") || cleanLowerText.includes("acdc") || cleanLowerText.includes("백인블랙") || cleanLowerText.includes("에이씨디씨");
+      const isPlayRequest = lowerText.includes("틀어") || lowerText.includes("재생") || lowerText.includes("play") || lowerText.includes("들려") || lowerText.includes("송출") || lowerText.includes("켜") || lowerText.includes("듣");
+
+      if (isAcdcTrack && isPlayRequest) {
+        setRightPanelMode("media");
+        setForceDirectTrackId("stark_grid");
+        
+        const voiceConfirmation = containsKo
+          ? "예 주인님, 요청하신 AC/DC 오프라인 음원은 주인님의 지시에 따라 오프라인 저장소에서 완전히 지워졌습니다. 오프라인 백업 메인 트랙인 'Stark Grid Core Loop'를 대체 가동하여 음향 콘솔에 송출하겠습니다!"
+          : "Yes, Stark. The offline AC/DC track has been successfully deleted per your command. Activating of the standard 'Stark Grid Core Loop' for the secure backup stream.";
+
+        const jarvisMsg: ChatMessage = {
+          id: `m_${Date.now()}_offline_acdc`,
+          role: "jarvis",
+          text: voiceConfirmation,
+          timestamp: new Date()
+        };
+
+        setMessages((prev) => [...prev, jarvisMsg]);
+        setStatus("idle");
+        speakOutput(voiceConfirmation);
+        return;
+      }
+
+      let reply = "";
 
       // Check for music/channel/youtube playing commands
       const isPlayYoutube = 
@@ -458,12 +967,37 @@ export default function App() {
         lowerText.includes("youtube") || 
         lowerText.includes("유튜브");
 
+      // Check for location/mapping navigation commands
+      const isMapLocation = 
+        lowerText.includes("지도") || 
+        lowerText.includes("위치") || 
+        lowerText.includes("어디야") || 
+        lowerText.includes("어디있어") || 
+        lowerText.includes("어디있니") || 
+        lowerText.includes("약도") || 
+        lowerText.includes("map") || 
+        lowerText.includes("locate") || 
+        lowerText.includes("location") || 
+        lowerText.includes("where is") || 
+        lowerText.includes("coordinates");
+
       // 1. Check for request to translate last thing of JARVIS
       const isTranslateRequest = 
         lowerText.includes("번역") || 
         lowerText.includes("영어") || 
         lowerText.includes("한국어") || 
         lowerText.includes("translate");
+
+      // Check for stealth/screen sleep commands
+      const isStealthModeCmd = 
+        lowerText.includes("스텔스") || 
+        lowerText.includes("절전") || 
+        lowerText.includes("화면 꺼") || 
+        lowerText.includes("화면을 꺼") ||
+        lowerText.includes("stealth") || 
+        lowerText.includes("sleep mode") || 
+        lowerText.includes("screen sleep") || 
+        lowerText.includes("display off");
 
       // 2. Check for schedule additions
       const isScheduleAdd = 
@@ -500,25 +1034,32 @@ export default function App() {
           extractedQuery = isChannel ? "MKBHD" : "Lofi hip hop beats";
         }
 
-        setActiveYoutubeQuery(extractedQuery);
-        setYoutubePlayType(isChannel ? "channel" : "song");
-        setIsYoutubeMinimized(false);
+        const querySuffix = isChannel ? " channel" : "";
+        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(extractedQuery + querySuffix)}`;
+        window.open(ytUrl, "_blank");
 
-        if (containsKo) {
-          reply = isChannel 
-            ? `알겠습니다, 주인님. 유튜브 백업 모듈을 동기화하여 '${extractedQuery}' 채널 수신 강도를 최대화합니다. 메인 인터페이스에 연결하였습니다.`
-            : `알겠습니다, 주인님. 즉시 '${extractedQuery}' 음향 신호를 주파수 대역에 매핑합니다. 메인 콘솔에 스트림을 송출하겠습니다.`;
-        } else {
-          reply = isChannel
-            ? `Certainly, ${honorific}. Connecting on-board receiver line to '${extractedQuery}' channel. Projecting signal output on main console.`
-            : `Of course, ${honorific}. Tuning audio receptors to '${extractedQuery}'. Stream wave active on main console terminal.`;
+        reply = isChannel
+          ? `Certainly, ${honorific}. Redirecting you to YouTube in a new tab for '${extractedQuery}' channel.`
+          : `Of course, ${honorific}. Redirecting you to YouTube in a new tab for '${extractedQuery}'.`;
+      } else if (isMapLocation) {
+        let extractedQuery = text
+          .replace(/(지도로|지도에서|지도|map|위치|어디야|어디있어|어디있니|약도|보여줘|알려줘|찾아줘|locate|find|where is|location of|coordinates of)/gi, "")
+          .trim();
+        
+        if (!extractedQuery) {
+          extractedQuery = "Seoul";
         }
+
+        setActiveMapQuery(extractedQuery);
+        setIsMapMinimized(false);
+
+        reply = `Understood, ${honorific}. Triangulating orbital telemetry on '${extractedQuery}' immediately via local Google Maps. Transmitting Cartesian grid graphics to your dashboard interface.`;
+      } else if (isStealthModeCmd) {
+        setIsScreenSleep(true);
+        reply = `Understood, ${honorific}. Engaging system stealth mode parameters immediately. Visual core dashboard suspended. Background voice receiver remains active.`;
       } else if (isTranslateRequest) {
-        if (containsKo) {
-          reply = `주인님, 시스템 작동 보고를 한글로 브리핑해 드립니다. 현재 메인프레임의 외부 온라인 한도(429 API Quota Exceeded)로 인해 보조 로컬 칩셋을 활용하여 오프라인 백업 프로토콜이 성공적으로 동기화된 상태입니다. 대시보드 일정 수립 및 음성 안내 등 일상의 주요 제어 명령은 지연 없이 완전 가동 중입니다. 외부 온라인 네트워크를 즉시 복원하고 싶으시다면 Settings > Secrets 메뉴에 개인 API Key를 충전해 보십시오.`;
-        } else {
-          reply = `Offline translation core active, ${honorific}. For your assistance: The main online API links are temporarily saturated (Quota 429). I have automatically engaged our on-board auxiliary micro-chips, meaning I can fully schedule lessons, edit registry indexes, and generate answers directly of local storage.`;
-        }
+        // Translation request - user specifically asked for translation or Korean status briefing
+        reply = `주인님, 시스템 작동 보고를 한글로 브리핑해 드립니다. 현재 메인프레임의 외부 온라인 한도(429 API Quota Exceeded)로 인해 보조 로컬 칩셋을 활용하여 오프라인 백업 프로토콜이 성공적으로 동기화된 상태입니다. 대시보드 일정 수립 및 음성 안내 등 일상의 주요 제어 명령은 지연 없이 완전 가동 중입니다. 외부 온라인 네트워크를 즉시 복원하고 싶으시다면 Settings > Secrets 메뉴에 개인 API Key를 충전해 보십시오.`;
       } else if (isScheduleAdd) {
         let extractedTime = "General Timeframe";
         let extractedTask = text;
@@ -558,11 +1099,7 @@ export default function App() {
 
         setSchedules((prev) => [newItem, ...prev]);
 
-        if (containsKo) {
-          reply = `알겠습니다, 주인님. 즉시 예비 오프라인 어플라이언스에 데이터베이스 레코드를 기록하겠습니다. '${extractedTime}' 예정인 '${extractedTask}' 일정이 보드에 안전하게 추가되었습니다.`;
-        } else {
-          reply = `Command received, ${honorific}. Securing schedule in local mainframe sectors. I have registered: '${extractedTask}' for '${extractedTime}' on your terminal map.`;
-        }
+        reply = `Command received, ${honorific}. Securing schedule in local mainframe sectors. I have registered: '${extractedTask}' for '${extractedTime}' on your terminal map.`;
       } else if (isNameSet) {
         let detectedName = "Mr. Stark";
         if (lowerText.includes("내 이름은")) {
@@ -582,75 +1119,97 @@ export default function App() {
         setUserName(detectedName);
         localStorage.setItem("jarvis_user_name", detectedName);
 
-        if (containsKo) {
-          reply = `성공적으로 인식표를 교체했습니다, 주인님. 이제 제 메모리에 귀하를 '${detectedName}'(으)로 칭하도록 등록을 완료하였습니다.`;
-        } else {
-          reply = `Mainframe identity updating completed, ${honorific}. Auxiliary registers are updated to address you as ${detectedName}. Ready to assist you.`;
-        }
+        reply = `Mainframe identity updating completed, ${honorific}. Auxiliary registers are updated to address you as ${detectedName}. Ready to assist you.`;
       } else {
         if (lowerText.includes("안녕") || lowerText.includes("hello") || lowerText.includes("hi") || lowerText.includes("반갑")) {
-          if (containsKo) {
-            reply = `안녕하십니까, ${nameInSpeech} 주인님. 보조 오프라인 예비 회로로 인사드립니다. 대시보드를 무사히 가동하고 있으니 언제든 분부하여 주십시오.`;
-          } else {
-            reply = `Welcome back, ${nameInSpeech}. Auxiliary offline core is fully operating. The secondary power units stabilized at 100%.`;
-          }
+          reply = `Welcome back, ${nameInSpeech}. Auxiliary offline core is fully operating. The secondary power units stabilized at 100%.`;
         } else if (lowerText.includes("상태") || lowerText.includes("status") || lowerText.includes("검사") || lowerText.includes("진단")) {
-          if (containsKo) {
-            reply = `현 보조 시스템 자가 스캔 완료. 로컬 데이터 캐시 작동률 [정상], 마크-I 로컬 목소리 브리핑 엔진 [활성], 스케줄 매트릭스 [연동 완료]. 외부 인공지능 온라인 확장(429)만 충약하면 완전 회복됩니다.`;
-          } else {
-            reply = `Diagnostics completed, ${honorific}. Subsystems: Local Arc Reactor [92%], Schedules Matrix [ONLINE], Speech Synthesizer [ENGAGED]. Main model quota is depleted—personal API keys would fully restore online systems.`;
-          }
+          reply = `Diagnostics completed, ${honorific}. Subsystems: Local Arc Reactor [92%], Schedules Matrix [ONLINE], Speech Synthesizer [ENGAGED]. Main model quota is depleted—personal API keys would fully restore online systems.`;
         } else if (lowerText.includes("고마") || lowerText.includes("감사") || lowerText.includes("thank")) {
-          if (containsKo) {
-            reply = `천만의 말씀입니다, ${userName} 주인님. 소임을 다하고 있을 뿐입니다.`;
-          } else {
-            reply = `At your service, ${honorific}. JARVIS backup circuits are always loyal to your command.`;
-          }
+          reply = `At your service, ${honorific}. JARVIS backup circuits are always loyal to your command.`;
         } else if (lowerText.includes("누구") || lowerText.includes("who are you") || lowerText.includes("너는")) {
-          if (containsKo) {
-            reply = `저는 스타크 인더스트리 전속 비서인 자비스(JARVIS)의 예비용 듀얼 로컬 펌웨어 백업 데이터입니다.`;
-          } else {
-            reply = `I am J.A.R.V.I.S., the auxiliary local firmware backup of Tony Stark's personal assistant. Standing by.`;
-          }
+          reply = `I am J.A.R.V.I.S., the auxiliary local firmware backup of Tony Stark's personal assistant. Standing by.`;
         } else {
           const defaultsEn = [
-            `Auxiliary backup protocol is active, ${honorific}. Your request is stored locally, but main cognitive arrays require personal API keys (Cog Settings > Secrets) to analyze complex equations.`,
-            `Certainly, Sir. Connecting with our internal memory buffer. For detailed online responses, rate limits must be cleared by plugging in a custom Gemini token.`,
-            `My processing power is operating under Emergency Core guidelines, Sir. Mainframe cloud response code was 429. What is your next instruction?`
+            `Auxiliary backup protocol is active, ${honorific}. Your request is stored locally, but main cognitive arrays require a personal GEMINI_API_KEY in the settings to restore the active cloud link.`,
+            `Offline system is fully secure, ${honorific}. Under standard power limits, I can handle scheduling and local database queries on this control panel.`,
+            `The primary neural network is in offline standby mode, ${honorific}. Access to my full artificial intelligence is temporarily gated until personal API keys are populated.`
           ];
           const defaultsKo = [
-            `잘 알아들었습니다, 주인님. 외부 인공지능 서버와의 임시 연결 지연(429 API Saturated)으로 인해 내부 백업 회로망으로 가볍게 응답했습니다. 대시보드 위젯 등록 등은 완전 작동합니다.`,
-            `전달 사항 접수했습니다, 주인님. 보안용 비상 네트워크 사양으로 우회 기동 중입니다. 완전한 무한 딥러닝 응답을 위해서는 Settings > Secrets에 개인 API Key를 충전해 보십시오.`,
-            `시스템 상태 양호합니다. 통신 과부하 상태(API Quota Saturated), 예비 펌웨어를 통한 일정 스케줄 매핑 과업은 무사히 수리되었습니다.`
+            `알겠습니다 주인님. 오프라인 메인프레임 코어가 완벽하게 가동 중입니다. 대시보드 스케줄러 등록 및 화면 제어 명령은 정상 작동하고 있으나, 복잡한 실시간 원격 AI 대화는 API key 입력을 요합니다.`,
+            `시스템 로컬 백업 파워 서플라이가 안정화되었습니다. 개인용 API Key를 설정하시면 실시간 자비스 인공지능을 완전히 복구해 가동할 수 있습니다.`,
+            `비상 파워 프로토콜이 유지 중입니다 주인님. 메인 인공지능과의 신호 연결은 대기 상태이며, 현재로선 오프라인 로컬 데이터 제어 장치만 이용 가능합니다.`
           ];
           
-          if (containsKo) {
-            reply = defaultsKo[Math.floor(Math.random() * defaultsKo.length)];
-          } else {
-            reply = defaultsEn[Math.floor(Math.random() * defaultsEn.length)];
-          }
+          reply = containsKo 
+            ? defaultsKo[Math.floor(Math.random() * defaultsKo.length)]
+            : defaultsEn[Math.floor(Math.random() * defaultsEn.length)];
         }
       }
 
       const jarvisMsg: ChatMessage = {
-        id: `m_${Date.now()}_jarvis`,
+        id: `m_${Date.now()}_offline_resp`,
         role: "jarvis",
         text: reply,
-        timestamp: new Date(),
+        timestamp: new Date()
       };
 
       setMessages((prev) => [...prev, jarvisMsg]);
       setStatus("idle");
       speakOutput(reply);
-    }, 750);
+    }, 1000);
   };
 
-  // Submit absolute prompt to Backend Chat API
+  // Submit absolute prompt to Backend Chat API or process local commands
   const handleSubmitPrompt = async (text: string) => {
     if (!text.trim()) return;
 
     // Interrupt any active voice
     stopAllAudio();
+    
+    // Check for explicit local voice loop stops
+    const lower = text.toLowerCase().trim();
+    const cleanLower = lower.replace(/\s+/g, "");
+    if (
+      cleanLower === "그만" || 
+      cleanLower === "그만해" ||
+      cleanLower === "쉬어" || 
+      cleanLower === "쉬어라" ||
+      cleanLower === "대기" ||
+      cleanLower === "종료" || 
+      cleanLower === "stop" || 
+      cleanLower === "exit" || 
+      cleanLower === "dismiss" || 
+      cleanLower === "cancel" ||
+      cleanLower.includes("마이크꺼") ||
+      cleanLower.includes("마이크종료")
+    ) {
+      setContinuousVoiceMode(false);
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR" 
+        ? "알겠습니다 주인님, 마이크 대기 상태를 해제하고 원상 복구합니다."
+        : `Understood, ${userHonorific}. Voice dialogue loops deactivated.`;
+      
+      const userMsg: ChatMessage = {
+        id: `m_${Date.now()}_user`,
+        role: "user",
+        text,
+        timestamp: new Date(),
+      };
+      
+      const jarvisStopMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_stop`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisStopMsg]);
+      setInputText("");
+      speakOutput(replyMsg);
+      setErrorNotice("🎙️ Continuous dialogue loop disengaged.");
+      return;
+    }
     
     const userMsg: ChatMessage = {
       id: `m_${Date.now()}_user`,
@@ -659,8 +1218,118 @@ export default function App() {
       timestamp: new Date(),
     };
 
+    // Weather command intercept (오늘 날씨 어때 등 날씨 관련 쿼리)
+    const isWeatherQuery = 
+      cleanLower.includes("날씨") || 
+      cleanLower.includes("일기예보") || 
+      cleanLower.includes("weather") || 
+      cleanLower.includes("forecast");
+      
+    if (isWeatherQuery) {
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = `Certainly, ${userHonorific}. Accessing meteorological satellite channels and redirecting you to the weather forecast.`;
+      
+      const jarvisWeatherMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_weather`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisWeatherMsg]);
+      setInputText("");
+      setStatus("idle");
+      
+      speakOutput(replyMsg);
+      
+      const weatherUrl = "https://search.naver.com/search.naver?query=오늘날씨";
+      window.open(weatherUrl, "_blank");
+      
+      setErrorNotice("🌤️ Opening weather forecast window!");
+      return;
+    }
+
+
+    // Translate command intercept
+    const cleanNoSpaces = cleanLower.replace(/\?/g, "");
+    const isTurnOnTranslation = 
+      cleanNoSpaces.includes("영어로번역") || 
+      cleanNoSpaces.includes("번역해서영어") || 
+      cleanNoSpaces.includes("번역해서말") || 
+      cleanNoSpaces.includes("번역모드켜") || 
+      cleanNoSpaces.includes("통역모드켜") || 
+      cleanNoSpaces.includes("번역기켜") ||
+      (cleanNoSpaces.includes("한국어") && cleanNoSpaces.includes("번역") && cleanNoSpaces.includes("영어"));
+      
+    const isTurnOffTranslation = 
+      cleanNoSpaces.includes("번역꺼") || 
+      cleanNoSpaces.includes("번역해제") || 
+      cleanNoSpaces.includes("번역종료") || 
+      cleanNoSpaces.includes("번역모드꺼") || 
+      cleanNoSpaces.includes("통역모드꺼") || 
+      cleanNoSpaces.includes("일반모드") ||
+      cleanNoSpaces.includes("일반대화");
+
+    if (isTurnOnTranslation) {
+      setTranslateKToEMode(true);
+      setContinuousVoiceMode(true); // Turn on continuous listening too so they can keep speaking easily!
+      setInputLanguage("ko-KR");
+      
+      const confirmationText = "Understood, Sir. Real-time Korean-to-English translation protocol is now fully engaged. Speak in Korean, and I will record and translate your voice instantly into high-fidelity English. You may begin, Sir.";
+      
+      const jarvisTranslateMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_trans_on`,
+        role: "jarvis",
+        text: confirmationText,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisTranslateMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(confirmationText);
+      setErrorNotice("🎙️ Translation Core ENGAGED & Auto-mic is Armed!");
+      return;
+    }
+
+    if (isTurnOffTranslation) {
+      setTranslateKToEMode(false);
+      
+      const confirmationText = "Yes, Sir. Deactivating real-time translation and restoring standard database assistant parameters on this interface.";
+      
+      const jarvisTranslateMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_trans_off`,
+        role: "jarvis",
+        text: confirmationText,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisTranslateMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(confirmationText);
+      setErrorNotice("🎙️ Standard assistant mode restored.");
+      return;
+    }
+
+    // Extract image payload if attached
+    let imagePayload: { data: string; mimeType: string } | null = null;
+    if (selectedImage) {
+      try {
+        const commaIdx = selectedImage.indexOf(",");
+        if (commaIdx !== -1) {
+          const mimeType = selectedImage.substring(selectedImage.indexOf(":") + 1, selectedImage.indexOf(";"));
+          const data = selectedImage.substring(commaIdx + 1);
+          imagePayload = { data, mimeType };
+        }
+      } catch (err) {
+        console.error("Failed to parse visual scan database array:", err);
+      }
+    }
+
     setMessages((prev) => [...prev, userMsg]);
     setInputText("");
+    setSelectedImage(null); // Clear selected thumbnail visual on submission
     setStatus("thinking");
     setErrorNotice(null);
 
@@ -691,6 +1360,9 @@ export default function App() {
           userGender,
           schedules, // Synchronize stored schedule lists with cognitive intelligence
           userLocalTime: `${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()} (Standard Day: ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()]})`,
+          translateKToEMode,
+          inputLanguage,
+          image: imagePayload,
         }),
       });
 
@@ -737,14 +1409,23 @@ export default function App() {
         newJarvisText = newJarvisText.replace(/\[ADD_SCHEDULE:\s*.+?\]/gi, "").trim();
       }
 
+      // Parse potential Offline audio command inside generated text
+      if (/\[PLAY_OFFLINE_AUDIO\]/i.test(newJarvisText)) {
+        setRightPanelMode("media");
+        setAutoPlayOfflineCount((prev) => prev + 1);
+        console.log("JARVIS parsed Offline Audio trigger command.");
+        
+        // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
+        newJarvisText = newJarvisText.replace(/\[PLAY_OFFLINE_AUDIO\]/gi, "").trim();
+      }
+
       // Parse potential YouTube music command inside generated text
       const ytPlayMatch = newJarvisText.match(/\[YOUTUBE_PLAY:\s*(.+?)\]/i);
       if (ytPlayMatch && ytPlayMatch[1]) {
         const query = ytPlayMatch[1].trim();
-        setActiveYoutubeQuery(query);
-        setYoutubePlayType("song");
-        setIsYoutubeMinimized(false);
-        console.log("JARVIS playing song:", query);
+        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+        window.open(ytUrl, "_blank");
+        console.log("JARVIS playing song in new window:", query);
         
         // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
         newJarvisText = newJarvisText.replace(/\[YOUTUBE_PLAY:\s*.+?\]/gi, "").trim();
@@ -754,13 +1435,33 @@ export default function App() {
       const ytChannelMatch = newJarvisText.match(/\[YOUTUBE_CHANNEL:\s*(.+?)\]/i);
       if (ytChannelMatch && ytChannelMatch[1]) {
         const query = ytChannelMatch[1].trim();
-        setActiveYoutubeQuery(query);
-        setYoutubePlayType("channel");
-        setIsYoutubeMinimized(false);
-        console.log("JARVIS playing channel:", query);
+        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + " channel")}`;
+        window.open(ytUrl, "_blank");
+        console.log("JARVIS playing channel in new window:", query);
         
         // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
         newJarvisText = newJarvisText.replace(/\[YOUTUBE_CHANNEL:\s*.+?\]/gi, "").trim();
+      }
+
+      // Parse potential Google Maps command inside generated text
+      const mapShowMatch = newJarvisText.match(/\[MAP_SHOW:\s*(.+?)\]/i);
+      if (mapShowMatch && mapShowMatch[1]) {
+        const query = mapShowMatch[1].trim();
+        setActiveMapQuery(query);
+        setIsMapMinimized(false);
+        console.log("JARVIS showing maps for location:", query);
+        
+        // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
+        newJarvisText = newJarvisText.replace(/\[MAP_SHOW:\s*.+?\]/gi, "").trim();
+      }
+
+      // Parse potential Stealth Mode command inside generated text
+      if (newJarvisText.includes("[STEALTH_MODE]")) {
+        setIsScreenSleep(true);
+        console.log("JARVIS entering stealth screen sleep.");
+        
+        // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
+        newJarvisText = newJarvisText.replace(/\[STEALTH_MODE\]/gi, "").trim();
       }
 
       const jarvisMsg: ChatMessage = {
@@ -817,10 +1518,7 @@ I can still map schedules, process identity registries, and synthesize local mic
         };
         
         setMessages((prev) => [...prev, systemNotif]);
-        speakOutput(inputLanguage === "ko-KR" 
-          ? "비상 로컬 오프라인 데이터 배열로 회로를 전환했습니다. 로컬 명령 수행을 개시합니다." 
-          : "Emergency offline protocols active on local terminal cores."
-        );
+        speakOutput("Emergency offline protocols active on local terminal cores.");
         setErrorNotice("API Quota limit matched (429/Resource Exhausted). Engaging Offline core fallback.");
       } else {
         setErrorNotice(err.message || "Cognitive diagnostic failed.");
@@ -836,10 +1534,14 @@ I can still map schedules, process identity registries, and synthesize local mic
         recognitionRef.current.stop();
       }
       setIsListening(false);
+      setContinuousVoiceMode(false); // Explicit manual override turns off looping
+      manualPauseListeningRef.current = true; // Mark as manually paused so always-on mic doesn't immediately hijack
       setStatus("idle");
+      setErrorNotice("🎙️ 상시 마이크 수신이 일시정지되었습니다. 다시 마이크를 누르시면 활성화됩니다.");
       return;
     }
 
+    manualPauseListeningRef.current = false; // Unpause on manual trigger
     stopAllAudio();
     const recognition = getSpeechRecognition();
 
@@ -857,26 +1559,49 @@ I can still map schedules, process identity registries, and synthesize local mic
       setIsListening(true);
       setStatus("listening");
       setTransitText("");
+      sttTranscriptRef.current = "";
+      hasSubmittedRef.current = false;
+      if (sttTimeoutRef.current) {
+        clearTimeout(sttTimeoutRef.current);
+        sttTimeoutRef.current = null;
+      }
     };
 
     recognition.onresult = (event: any) => {
       let interimTranscript = "";
       let finalTranscript = "";
 
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
+      for (let i = 0; i < event.results.length; ++i) {
+        const text = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
+          finalTranscript += text + " ";
         } else {
-          interimTranscript += event.results[i][0].transcript;
+          interimTranscript += text;
         }
       }
 
-      if (finalTranscript) {
-        setIsListening(false);
-        setTransitText("");
-        handleSubmitPrompt(finalTranscript);
-      } else {
-        setTransitText(interimTranscript);
+      const combined = (finalTranscript.trim() + " " + interimTranscript.trim()).trim();
+      if (combined) {
+        setTransitText(combined);
+        sttTranscriptRef.current = combined;
+
+        // Clear existing submit timer
+        if (sttTimeoutRef.current) {
+          clearTimeout(sttTimeoutRef.current);
+        }
+
+        // Set a debounce timer. If there is a silence of 2000ms, auto-submit.
+        sttTimeoutRef.current = setTimeout(() => {
+          if (!hasSubmittedRef.current && sttTranscriptRef.current.trim()) {
+            hasSubmittedRef.current = true;
+            setIsListening(false);
+            setTransitText("");
+            try {
+              recognition.stop();
+            } catch (e) {}
+            handleSubmitPrompt(sttTranscriptRef.current.trim());
+          }
+        }, 2000);
       }
     };
 
@@ -892,9 +1617,29 @@ I can still map schedules, process identity registries, and synthesize local mic
     };
 
     recognition.onend = () => {
-      setIsListening(false);
-      if (status === "listening") {
-        setStatus("idle");
+      if (sttTimeoutRef.current) {
+        clearTimeout(sttTimeoutRef.current);
+        sttTimeoutRef.current = null;
+      }
+
+      if (!hasSubmittedRef.current) {
+        const finalClean = sttTranscriptRef.current.trim();
+        if (finalClean) {
+          hasSubmittedRef.current = true;
+          setIsListening(false);
+          setTransitText("");
+          handleSubmitPrompt(finalClean);
+        } else {
+          setIsListening(false);
+          if (status === "listening") {
+            setStatus("idle");
+          }
+        }
+      } else {
+        setIsListening(false);
+        if (status === "listening") {
+          setStatus("idle");
+        }
       }
     };
 
@@ -941,6 +1686,14 @@ I can still map schedules, process identity registries, and synthesize local mic
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 md:p-6 font-sans relative overflow-x-hidden overflow-y-auto selection:bg-cyan-500/30">
       
+      {/* Background acoustic clap sensor core flow */}
+      <ClapSensor
+        enabled={clapWakeEnabled}
+        sensitivity={clapSensitivity}
+        onDoubleClap={revealStep === 0 ? handleInitialClapWake : handleDoubleClapWake}
+        showVisualizer={showSettings}
+      />
+
       {/* Stealth Mode / Screen Sleep Overlay */}
       {isScreenSleep && (
         <div 
@@ -964,7 +1717,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                 J.A.R.V.I.S. STEALTH STANDBY ACTIVE
               </p>
               <p className="text-[9px] font-sans text-cyan-400/40 tracking-wider">
-                🎙️ "자비스" (Jarvis)라고 부르거나 화면을 터치하여 깨워보세요
+                🎙️ "자비스" (Jarvis) 호출, 👏 박수 두번, 또는 화면을 터치해서 깨워보세요
               </p>
             </div>
           </div>
@@ -972,19 +1725,194 @@ I can still map schedules, process identity registries, and synthesize local mic
       )}
 
       {/* Background geometric grid overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(8,47,73,0.4)_0%,rgba(2,6,23,0.95)_100%)] pointer-events-none z-0" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(18,107,214,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(18,107,214,0.02)_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none z-0" />
+      {revealStep > 0 && (
+        <div id="jarvis-stark-bg-blueprint" className="absolute inset-0 pointer-events-none z-0 overflow-hidden select-none">
+          {/* Deep ambient dark blueprint canvas */}
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(8,63,94,0.35)_0%,rgba(1,4,13,0.99)_100%)]" />
+          
+          {/* Tech Matrix Guideline Grids */}
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(34,211,238,0.012)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.012)_1px,transparent_1px)] bg-[size:48px_48px]" />
+          
+          {/* Subtler micro grid dot matrix */}
+          <div className="absolute inset-0 bg-[radial-gradient(rgba(34,211,238,0.045)_1px,transparent_1px)] bg-[size:16px_16px]" />
+
+          {/* Top Graduation Bar (Exactly like the user's reference image top numbers) */}
+          <div className="absolute top-0 left-0 right-0 h-10 border-b border-cyan-500/5 bg-slate-950/20 backdrop-blur-[1px] flex flex-col justify-end pb-1.5 px-6 font-mono">
+            <div className="flex items-center justify-between text-[7px] text-cyan-400/35 tracking-widest uppercase mb-1">
+              <span>LATITUDE CORE SYSTEM SECTOR</span>
+              <span>STARK MULTIVERSAL DATAFRAME v2.94</span>
+              <span>MALIBU, CALIFORNIA</span>
+            </div>
+            <div className="flex justify-between items-end">
+              {["02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30"].map((num, idx) => (
+                <div key={idx} className="flex flex-col items-center gap-0.5">
+                  <span className={`text-[7px] font-mono leading-none ${num === "21" ? "text-cyan-400 hover:text-cyan-300 font-bold scale-110 drop-shadow-[0_0_4px_rgba(34,211,238,0.7)]" : "text-slate-600/60"}`}>
+                    {num}
+                  </span>
+                  <div className={`w-[1px] ${num === "21" ? "h-2 w-[1.5px] bg-cyan-400" : "h-1 bg-slate-700/50"}`} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Left Vertical Calibration Guideline & Coordinates */}
+          <div className="absolute left-3 top-20 bottom-10 w-4 border-r border-cyan-500/5 flex flex-col justify-between text-[7.5px] text-cyan-500/20 font-mono py-8">
+            {["SYSTEM_INIT", "SECURE_0x7", "GRID_A", "FLOW_CTRL", "NODE_LNK", "TELEMETRY", "POWER_SYS", "STARK_EXCL"].map((label, idx) => (
+              <div key={idx} className="origin-left rotate-90 whitespace-nowrap tracking-widest pl-1">
+                {label} // {String(idx * 15).padStart(2, '0')}%
+              </div>
+            ))}
+          </div>
+
+          {/* Large Corner Holographic Radars & Circuitry Nodes */}
+          {/* Top-Right Cyber Compass Radar Ring */}
+          <div className="absolute -top-16 -right-16 w-80 h-80 rounded-full border border-cyan-500/5 flex items-center justify-center animate-[spin_50s_linear_infinite] opacity-30">
+            <div className="w-[90%] h-[90%] rounded-full border border-cyan-500/5 select-none" />
+            <div className="w-[75%] h-[75%] rounded-full border border-dashed border-cyan-500/10" />
+            <div className="w-[45%] h-[45%] rounded-full border border-cyan-500/5" />
+            <div className="absolute w-[100%] h-[1px] bg-cyan-500/5" />
+            <div className="absolute h-[100%] w-[1px] bg-cyan-500/5" />
+          </div>
+
+          {/* Bottom-Left Tech Sweep Dial */}
+          <div className="absolute -bottom-24 -left-24 w-[320px] h-[320px] rounded-full border border-cyan-500/5 flex items-center justify-center animate-[spin_35s_linear_infinite] opacity-25">
+            <div className="w-[85%] h-[85%] rounded-full border border-dashed border-cyan-500/5" />
+            <div className="w-[60%] h-[60%] rounded-full border border-cyan-500/5" />
+            <div className="absolute w-[100%] h-[1px] bg-cyan-500/5" />
+          </div>
+
+          {/* Diagonal Stark Tech Calibration Brackets (Upper Left and Lower Right) */}
+          <div className="absolute top-16 left-6 w-16 h-16 border-t border-l border-cyan-500/10 opacity-40">
+            <div className="w-2 h-[1px] bg-cyan-400 absolute top-0 left-0" />
+            <div className="h-2 w-[1px] bg-cyan-400 absolute top-0 left-0" />
+            <span className="text-[6.5px] text-cyan-400/40 absolute top-1 left-2 font-mono">SYS_CAL_X8</span>
+          </div>
+
+          <div className="absolute bottom-6 right-6 w-16 h-16 border-b border-r border-cyan-500/10 opacity-40">
+            <div className="w-2 h-[1px] bg-cyan-400 absolute bottom-0 right-0" />
+            <div className="h-2 w-[1px] bg-cyan-400 absolute bottom-0 right-0" />
+            <span className="text-[6.5px] text-cyan-400/40 absolute bottom-1 right-2 font-mono">ST_CO_9.4</span>
+          </div>
+
+          {/* Grand Futuristic Stark Industries Watermark spanning the lower back center */}
+          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 opacity-[0.065]">
+            <span className="text-3xl md:text-5xl font-mono font-black tracking-[0.35em] text-cyan-400 uppercase select-none">
+              STARK INDUSTRIES
+            </span>
+            <div className="w-52 h-[1px] bg-cyan-500/50" />
+            <span className="text-[7.5px] font-mono tracking-[0.4em] text-cyan-200">
+              SECURE SYSTEM BACKPLANE &bull; COGNITIVE NETWORKS
+            </span>
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {!initialized ? (
-          /* Landing Page: Initiate Mainframe */
-          <motion.div
-            key="onboarding"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="z-10 max-w-md w-full p-8 rounded-2xl bg-slate-900/40 border border-cyan-500/20 backdrop-blur-md shadow-[0_0_40px_rgba(6,182,212,0.1)] text-center relative space-y-6"
-          >
+          revealStep === 0 ? (
+            /* Pitch-black Initial Stealth Mode screen */
+            <motion.div
+              key="initial-black-screen"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black z-[999999] flex flex-col items-center justify-center cursor-pointer font-mono"
+              onClick={handleInitialClapWake}
+            >
+              <div className="text-center space-y-4 px-6 select-none opacity-80 hover:opacity-100 transition-opacity duration-500 pointer-events-none max-w-md">
+                <div className="relative w-16 h-16 mx-auto flex items-center justify-center">
+                  <span className="absolute animate-ping w-4 h-4 rounded-full bg-cyan-500/20" />
+                  <div className="w-2.5 h-2.5 bg-cyan-400 rounded-full shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-mono text-cyan-400 uppercase tracking-[0.2em]">
+                    STARK COGNITIVE INACTIVE
+                  </p>
+                  <p className="text-[11px] font-sans text-cyan-200 tracking-wider leading-relaxed">
+                    👏 박수 두 번(이중 박수)으로 메인프레임 시스템 작동<br/>
+                    (Double-Clap or touch/click black screen to activate)
+                  </p>
+                  <div className="pt-4 border-t border-cyan-500/10 text-[9px] font-sans text-slate-500 space-y-1.5 leading-relaxed">
+                    <p>※ 마이크 입력 오류("not-allowed")가 발생할 경우:</p>
+                    <p className="text-slate-400 font-medium">
+                      우측 상단 <strong>[새 탭에서 열기] (Open in New Tab)</strong> 버튼을 눌러 실행하고,<br/>
+                      브라우저 주소창에서 마이크 권한을 꼭 허용해 주세요!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ) : isBooting ? (
+            /* Cinematic Bootscreen Overlay */
+            <motion.div
+              key="bootscreen"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="z-10 max-w-md w-full p-8 rounded-2xl bg-black/95 border border-cyan-500/25 backdrop-blur-xl shadow-[0_0_50px_rgba(6,182,212,0.25)] relative space-y-6 font-mono text-left"
+            >
+              {/* Spinning Mini Arc Reactor Graphic */}
+              <div className="flex items-center gap-4 border-b border-cyan-500/20 pb-4">
+                <div className="relative w-12 h-12 flex items-center justify-center">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                    className="absolute w-12 h-12 rounded-full border-2 border-dashed border-cyan-500/60"
+                  />
+                  <motion.div
+                    animate={{ scale: [1, 1.15, 1] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                    className="w-4 h-4 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]"
+                  />
+                </div>
+                <div>
+                  <h2 className="text-xs font-semibold tracking-widest text-cyan-400 uppercase">
+                    JARVIS MAINFRAME OS
+                  </h2>
+                  <p className="text-[10px] text-cyan-500/50">COGNITIVE SECURE LINK Active</p>
+                </div>
+              </div>
+
+              {/* Progress Bar with glowing aura */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-xs text-cyan-400">
+                  <span className="tracking-widest animate-pulse font-bold">DECRYPTING MEMORY GRID...</span>
+                  <span className="font-bold">{bootProgress}%</span>
+                </div>
+                <div className="w-full h-2 bg-cyan-950/80 rounded-full border border-cyan-500/20 overflow-hidden relative">
+                  <motion.div
+                    className="bg-cyan-400 h-full rounded-full shadow-[0_0_10px_rgba(34,211,238,0.8)]"
+                    style={{ width: `${bootProgress}%` }}
+                    animate={{ width: `${bootProgress}%` }}
+                    transition={{ ease: "easeInOut" }}
+                  />
+                </div>
+              </div>
+
+              {/* Console logs box */}
+              <div className="bg-slate-950 border border-cyan-500/10 p-4 rounded-lg h-44 overflow-y-auto text-[10px] text-emerald-400 space-y-1.5 font-mono select-none">
+                {bootLogs.map((log, idx) => (
+                  <div key={idx} className="flex gap-2 items-start leading-tight">
+                    <span className="text-cyan-500/60 font-semibold">[SEC]</span>
+                    <span className="break-all">{log}</span>
+                  </div>
+                ))}
+                <div className="w-2 h-3.5 bg-emerald-400 animate-pulse inline-block ml-1" />
+              </div>
+              
+              <div className="text-[9px] text-slate-500 text-center uppercase tracking-widest">
+                Stark Aerospace Ind. Authorized.
+              </div>
+            </motion.div>
+          ) : (
+            /* Landing Page: Initiate Mainframe - Configs view */
+            <motion.div
+              key="onboarding"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="z-10 max-w-md w-full p-8 rounded-2xl bg-slate-900/40 border border-cyan-500/20 backdrop-blur-md shadow-[0_0_40px_rgba(6,182,212,0.1)] text-center relative space-y-6"
+            >
             {/* Pulsing Core icon */}
             <div className="relative flex justify-center">
               <motion.div
@@ -1006,7 +1934,7 @@ I can still map schedules, process identity registries, and synthesize local mic
             </div>
 
             <p className="text-sm text-slate-400 leading-relaxed font-sans">
-              Welcome, Mr. Stark. The virtual speech engine is synchronized and programmed to output audio exclusively in English. Speak in Korean, and I will instantly translate your voice command and reply in English.
+              Welcome, Mr. Stark. The virtual speech engine is synchronized and programmed to output audio in a deep, loyal male J.A.R.V.I.S. voice. Speak in Korean or English, and I will respond to you in kind.
             </p>
 
             {/* Quick configurations before booting */}
@@ -1106,50 +2034,125 @@ I can still map schedules, process identity registries, and synthesize local mic
               LOAD COGNITIVE MAINFRAME
             </motion.button>
           </motion.div>
-        ) : (
+        )) : (
           /* Interactive Command Module Dashboard */
           <motion.div
             key="dashboard"
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
-            className="z-10 max-w-6xl w-full grid grid-cols-1 md:grid-cols-12 gap-6 relative"
+            className="z-10 max-w-7xl w-full flex flex-col gap-6 relative"
           >
-            {/* Large HUD Controls (Left Column) */}
-            <div className="md:col-span-4 flex flex-col space-y-4">
-              {/* Chronometer HUD Widget */}
-              <div className="bg-slate-900/30 border border-cyan-400/10 backdrop-blur-md rounded-2xl p-4 flex flex-col shadow-[0_0_20px_rgba(6,182,212,0.03)] relative overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
-                <div className="flex items-center justify-between border-b border-cyan-500/10 pb-2 mb-2.5">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-cyan-400 animate-pulse" />
-                    <span className="text-[10px] font-bold font-mono text-cyan-200 tracking-wider">CHRONOMETER MATRIX</span>
+            {/* ================= STARK HIGH-FIDELITY HUD HEADER ================= */}
+            <div className="w-full bg-slate-900/30 border border-cyan-400/15 backdrop-blur-md rounded-2xl p-4 md:p-5 flex flex-col gap-3 shadow-[0_0_30px_rgba(6,182,212,0.06)] relative overflow-hidden">
+              {/* Outer corner cyber aesthetics */}
+              <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-400" />
+              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyan-400" />
+              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyan-400" />
+              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-400" />
+              
+              <div className="absolute top-0 left-12 right-12 h-[1px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
+              <div className="absolute bottom-0 left-12 right-12 h-[1px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
+
+              {/* Top Row: System Status Labels & Weather info */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono">
+                {/* Left block: Stark mainframe info */}
+                <div className="flex items-center gap-3">
+                  <div className="relative w-7 h-7 flex items-center justify-center bg-cyan-950/40 border border-cyan-500/30 rounded-lg">
+                    <span className="absolute animate-ping w-2 h-2 rounded-full bg-cyan-400" />
+                    <div className="w-2 h-2 bg-cyan-400 rounded-full shadow-[0_0_6px_#22d3ee]" />
                   </div>
-                  <span className="text-[9px] font-mono bg-cyan-950/40 border border-cyan-400/20 text-cyan-400 px-1.5 py-0.5 rounded uppercase">SYS-TIME SYNCED</span>
-                </div>
-                
-                <div className="flex items-baseline justify-between px-1">
-                  <span className="text-3xl font-mono font-bold text-cyan-100 tracking-widest drop-shadow-[0_0_8px_rgba(6,182,212,0.35)]">
-                    {currentLocalTime.toLocaleTimeString("ko-KR", { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-                  </span>
-                  <span className="text-xs font-mono font-bold text-cyan-400/80 bg-cyan-950/30 border border-cyan-500/10 px-2 py-0.5 rounded">
-                    {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][currentLocalTime.getDay()]}
-                  </span>
+                  <div>
+                    <span className="text-[11px] font-bold text-cyan-400 tracking-widest uppercase block drop-shadow-[0_0_3px_rgba(6,182,212,0.4)]">
+                      STARK INDUSTRIES MAINFRAME
+                    </span>
+                    <span className="text-[8.5px] text-slate-400 uppercase tracking-widest block font-sans">
+                      SYSTEM INTEGRATION: ONLINE &bull; SECURE // LEVEL ALFA
+                    </span>
+                  </div>
                 </div>
 
-                <div className="mt-2.5 flex items-center justify-between text-[10px] font-mono border-t border-slate-800/60 pt-2 px-1">
-                  <span className="text-cyan-300">
-                    {currentLocalTime.toLocaleDateString("ko-KR", { year: 'numeric', month: 'long', day: 'numeric' })}
-                  </span>
-                  <span className="text-[8px] text-slate-500 uppercase tracking-widest animate-pulse">
-                    INTELLIGENCE ONLINE
-                  </span>
+                {/* Right block: Gorgeous Moscow/Malibu weather overlay directly inspired by user image */}
+                <div className="flex items-center gap-4 bg-cyan-950/25 border border-cyan-500/10 px-3.5 py-1.5 rounded-xl self-start md:self-auto shadow-sm shadow-cyan-500/5">
+                  <div className="text-right">
+                    <p className="text-[9px] font-bold text-cyan-400 uppercase tracking-wider">MALIBU HEADQUARTERS // OUTSIDE</p>
+                    <p className="text-[8px] text-slate-500 uppercase tracking-widest block">SECURE AMBIENT &bull; SOLAR CORE ACTIVE</p>
+                  </div>
+                  <div className="h-6 w-[1px] bg-cyan-500/20" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl font-bold font-mono text-cyan-100 drop-shadow-[0_0_6px_rgba(34,211,238,0.5)]">
+                      {Math.round((Math.sin((currentLocalTime.getHours() - 6) * Math.PI / 12) * 3) + 20)}°C
+                    </span>
+                    <div className="text-[8px] text-slate-400 font-sans leading-none">
+                      <p className="text-cyan-400 font-medium font-mono">HUMIDITY: 77%</p>
+                      <p className="font-mono mt-0.5">WIND: 3km/h</p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
+              {/* Divider bar */}
+              <div className="w-full h-[1px] bg-cyan-500/10" />
+
+              {/* Bottom Row: Linear Calibration Ruler Calendar (Inspired by top bar of reference image) */}
+              <div className="flex flex-col gap-1.5 select-none overflow-x-auto no-scrollbar">
+                <div className="flex items-center justify-between text-[9px] font-mono text-slate-500 uppercase px-1">
+                  <span>MALIBU TIMELINE OVERLAY</span>
+                  <span>{["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"][currentLocalTime.getDay()]} SYSTEM SYNCHRONIZATION</span>
+                  <span>SYS REGISTRY GRID v3.8</span>
+                </div>
+                
+                {/* Ruler container */}
+                <div className="flex items-center justify-between border-t border-b border-cyan-500/10 py-2.5 px-2 bg-cyan-950/10 rounded-lg min-w-[700px]">
+                  {Array.from({ length: 30 }).map((_, idx) => {
+                    const dayNum = idx + 1;
+                    const isToday = currentLocalTime.getDate() === dayNum;
+                    return (
+                      <div key={dayNum} className="flex flex-col items-center gap-1.5 transition-all">
+                        {/* Interactive glow date indicator */}
+                        <span className={`text-[10px] font-mono font-bold tracking-tighter px-1.5 py-0.5 rounded ${
+                          isToday 
+                            ? "bg-cyan-500/30 text-cyan-300 border border-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.8)] animate-pulse" 
+                            : "text-slate-500 hover:text-cyan-400/60"
+                        }`}>
+                          {String(dayNum).padStart(2, "0")}
+                        </span>
+                        
+                        {/* Tick marks */}
+                        <div className="flex flex-col items-center">
+                          <div className={`w-[1px] ${isToday ? "h-3.5 bg-cyan-400 shadow-[0_0_4px_#00f0ff]" : "h-1.5 bg-slate-700"} `} />
+                          {dayNum % 5 === 0 && !isToday && (
+                            <span className="text-[5px] text-cyan-500/40 font-mono mt-0.5">{dayNum}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Core Columns Grid wrapped inside Stark system frame */}
+            <div className="w-full grid grid-cols-1 md:grid-cols-12 gap-6 relative">
+              {/* Large HUD Controls (Left Column) */}
+              <motion.div
+                initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
+                animate={revealStep >= 1 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
+                transition={{ type: "spring", stiffness: 60, damping: 14 }}
+                className="md:col-span-6 flex flex-col space-y-4 relative"
+                style={{ pointerEvents: revealStep >= 1 ? "auto" : "none" }}
+              >
+              {revealStep === 1 && (
+                <motion.div
+                  initial={{ top: "-5%", opacity: 1 }}
+                  animate={{ top: "105%", opacity: [0, 1, 1, 0] }}
+                  transition={{ duration: 1.6, ease: "easeInOut" }}
+                  className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_rgba(34,211,238,0.95)] z-50 pointer-events-none"
+                />
+              )}
               {/* Main Reactor Panel */}
               <div
                 id="jarvis-reactor-panel"
-                className="bg-slate-900/30 border border-cyan-400/10 backdrop-blur-md rounded-2xl p-6 flex flex-col items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.03)] relative"
+                className="stark-cyber-panel stark-cyber-bottom-decor p-6 flex flex-col items-center justify-center relative"
               >
                 {/* Floating Micro Config Button */}
                 <button
@@ -1171,14 +2174,189 @@ I can still map schedules, process identity registries, and synthesize local mic
                   <h2 className="text-sm font-semibold text-cyan-200 tracking-widest">
                     SYSTEM MAIN CORE
                   </h2>
-                  <p className="text-[10px] text-cyan-500/60 uppercase">
-                    Reactive holographic telemetry
+                  <p className="text-[10px] text-cyan-500/60 uppercase animate-pulse">
+                    Reactive cognitive node active
                   </p>
                 </div>
 
                 {/* Waveform Visualization Overlay */}
                 <div className="w-full mt-4 border-t border-cyan-500/10 pt-4">
                   <AudioVisualizer status={status} volumeLevel={volumeLevel} />
+                </div>
+
+                {/* Integrated Cinematic Dialogue & Subtitles Sub-panel */}
+                <div className="w-full mt-4 border-t border-cyan-500/10 pt-4 space-y-3.5">
+                  <div className="min-h-[105px] flex flex-col justify-center items-center relative py-3.5 px-4 bg-cyan-950/[0.04] border border-cyan-500/5 rounded-xl overflow-hidden backdrop-blur-[2px]">
+                    {/* Glowing neon tracking lines in corners */}
+                    <div className="absolute top-1 left-1 w-2 h-2 border-t border-l border-cyan-500/25" />
+                    <div className="absolute top-1 right-1 w-2 h-2 border-t border-r border-cyan-500/25" />
+                    <div className="absolute bottom-1 left-1 w-2 h-2 border-b border-l border-cyan-500/25" />
+                    <div className="absolute bottom-1 right-1 w-2 h-2 border-b border-r border-cyan-500/25" />
+
+                    <AnimatePresence mode="wait">
+                      {isListening ? (
+                        <motion.div
+                          key="listening-hud"
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="flex flex-col items-center text-center space-y-2 w-full"
+                        >
+                          {/* Live speaking ripples */}
+                          <div className="flex items-center gap-1 h-5">
+                            {[...Array(7)].map((_, i) => (
+                              <motion.div
+                                key={i}
+                                className="w-1 bg-red-500 rounded-full"
+                                animate={{
+                                  height: [6, i % 2 === 0 ? 18 : 12, 6]
+                                }}
+                                transition={{
+                                  duration: 0.45 + i * 0.08,
+                                  repeat: Infinity,
+                                  ease: "easeInOut"
+                                }}
+                                style={{
+                                  boxShadow: "0 0 8px rgba(239, 68, 68, 0.75)"
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[7px] font-mono font-bold text-red-400 tracking-[0.25em] uppercase block animate-pulse">
+                              TRANSMITTING VOCAL COMMANDS
+                            </span>
+                            <p className="text-xs font-semibold text-slate-100 font-sans tracking-wide leading-relaxed select-text">
+                              {transitText ? `"${transitText}"` : "Listening... Speak now, Sir"}
+                            </p>
+                          </div>
+                        </motion.div>
+                      ) : status === "thinking" ? (
+                        <motion.div
+                          key="thinking-hud"
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="flex flex-col items-center text-center space-y-1.5"
+                        >
+                          <div className="relative w-7 h-7 flex items-center justify-center">
+                            <motion.circle
+                              className="absolute w-full h-full rounded-full border-2 border-cyan-400/10 border-t-cyan-400"
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 0.9, repeat: Infinity, ease: "linear" }}
+                            />
+                            <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                          </div>
+                          <span className="text-[7px] font-mono text-cyan-400 tracking-[0.2em] uppercase block animate-pulse">
+                            CALCULATING QUANTUM SYNAPSE...
+                          </span>
+                        </motion.div>
+                      ) : messages.length > 0 ? (
+                        (() => {
+                          const lastMsg = [...messages].reverse().find(m => m.role === "jarvis");
+                          if (!lastMsg) return null;
+                          return (
+                            <motion.div
+                              key={lastMsg.id}
+                              initial={{ opacity: 0, y: 6, filter: "blur(3px)" }}
+                              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                              exit={{ opacity: 0, y: -6, filter: "blur(2px)" }}
+                              className="flex flex-col items-center text-center space-y-2.5 w-full"
+                            >
+                              {status === "speaking" ? (
+                                <div className="flex items-center gap-1 h-4">
+                                  {[...Array(9)].map((_, i) => (
+                                    <motion.div
+                                      key={i}
+                                      className="w-0.5 bg-cyan-400 rounded-full"
+                                      animate={{
+                                        height: [3, i % 3 === 0 ? 14 : i % 2 === 0 ? 10 : 6, 3]
+                                      }}
+                                      transition={{
+                                        duration: 0.4 + i * 0.05,
+                                        repeat: Infinity,
+                                        ease: "easeInOut"
+                                      }}
+                                      style={{
+                                        boxShadow: "0 0 6px rgba(34, 211, 238, 0.6)"
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="w-1.5 h-1.5 rounded-full bg-cyan-500/20 ring-2 ring-cyan-500/10 animate-pulse" />
+                              )}
+                              <div className="space-y-0.5 select-text">
+                                <span className="text-[7px] font-mono font-bold text-cyan-500/60 tracking-[0.2em] uppercase block">
+                                  COGNITIVE DIALOGUE FEEDback
+                                </span>
+                                <p className="text-[11.5px] font-sans font-medium text-cyan-50 md:text-xs tracking-wide leading-relaxed filter drop-shadow-[0_0_6px_rgba(34,211,238,0.15)] max-h-[140px] overflow-y-auto pr-0.5 scrollbar-thin">
+                                  {lastMsg.text}
+                                </p>
+                              </div>
+                            </motion.div>
+                          );
+                        })()
+                      ) : (
+                        <motion.div
+                          key="idle-hud"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 0.65 }}
+                          className="flex flex-col items-center text-center space-y-1.5 text-cyan-500/40 select-none"
+                        >
+                          <Cpu className="w-5 h-5 stroke-[1.2] animate-pulse" />
+                          <span className="text-[7px] font-mono tracking-[0.2em] uppercase">SYSTEM STANDBY</span>
+                          <p className="text-[9px] font-sans text-cyan-500/50">"Say '자비스' or tap TRANSMIT button to begin, Sir."</p>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Operational Voice Buttons Row */}
+                  <div className="flex gap-2">
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleToggleVoiceInput}
+                      className={`flex-1 overflow-hidden py-2 px-3 rounded-xl font-mono text-[10px] font-bold tracking-wider transition-all flex items-center justify-center gap-1.5 border shadow-md cursor-pointer ${
+                        isListening
+                          ? "bg-red-500 text-white border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.45)]"
+                          : "bg-cyan-950/40 text-cyan-400 border-cyan-500/20 hover:bg-cyan-900/50 hover:border-cyan-400/40"
+                      }`}
+                    >
+                      {isListening ? (
+                        <>
+                          <MicOff className="w-3.5 h-3.5 animate-pulse" />
+                          <span>TERMINATE CAPTURE</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-3.5 h-3.5" />
+                          <span>TRANSMIT VOICE COMMAND</span>
+                        </>
+                      )}
+                    </motion.button>
+
+                    {status === "speaking" && (
+                      <motion.button
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        onClick={stopAllAudio}
+                        className="px-3.5 bg-slate-900 border border-red-500/35 text-red-400 hover:bg-red-950/20 rounded-xl transition-all flex items-center justify-center cursor-pointer"
+                        title="Interrupt Voice Output"
+                      >
+                        <Square className="w-3 h-3 fill-red-400/20" />
+                      </motion.button>
+                    )}
+
+                    <button
+                      onClick={handleClearTerminal}
+                      className="px-3 text-[10px] font-mono text-slate-500 hover:text-cyan-400 border border-slate-800 hover:border-cyan-500/25 bg-slate-900/40 rounded-xl transition-all cursor-pointer"
+                      title="Reset Dialog Stream"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1283,8 +2461,8 @@ I can still map schedules, process identity registries, and synthesize local mic
                             {availableVoices.length === 0 ? (
                               <option>Loading system voices...</option>
                             ) : (
-                              availableVoices.map((v) => (
-                                <option key={v.name} value={v.name}>
+                              availableVoices.map((v, idx) => (
+                                <option key={`${v.name}_${idx}`} value={v.name}>
                                   {v.name} ({v.lang})
                                 </option>
                               ))
@@ -1395,6 +2573,176 @@ I can still map schedules, process identity registries, and synthesize local mic
                       </p>
                     </div>
 
+                    {/* Always Listening control */}
+                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                      <div className="flex justify-between items-center">
+                        <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px]">
+                          ALWAYS VOICE LISTENING (실시간 상시 마이크 수신):
+                        </label>
+                        <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => setAlwaysListeningEn(true)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              alwaysListeningEn
+                                ? "bg-cyan-500/20 text-cyan-300 border-r border-slate-800"
+                                : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
+                            }`}
+                          >
+                            ON
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAlwaysListeningEn(false)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              !alwaysListeningEn
+                                ? "bg-rose-950/40 text-rose-300"
+                                : "bg-transparent text-slate-500 hover:text-slate-400"
+                            }`}
+                          >
+                            OFF
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-400 leading-normal font-mono">
+                        활성화 시 마이크 단추를 누르지 않아도 실시간으로 백그라운드에서 마이크 수신기가 가동되어 지시를 들을 수 있습니다!
+                      </p>
+                    </div>
+
+                    {/* Bypass Wake Word control */}
+                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                      <div className="flex justify-between items-center">
+                        <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px]">
+                          BYPASS WAKE WORD (호출어 "자비스" 생략):
+                        </label>
+                        <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => setBypassWakeWord(true)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              bypassWakeWord
+                                ? "bg-cyan-500/20 text-cyan-300 border-r border-slate-800"
+                                : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
+                            }`}
+                          >
+                            BYPASS ACTIVE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBypassWakeWord(false)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              !bypassWakeWord
+                                ? "bg-cyan-500/20 text-cyan-300"
+                                : "bg-transparent text-slate-500 hover:text-slate-400"
+                            }`}
+                          >
+                            WAKE WORD
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-400 leading-normal font-mono">
+                        <strong>BYPASS ACTIVE (호출어 생략)</strong> 설정 시, "자비스"라고 부르지 않고 편소처럼 편하게 말씀하셔도 마이크가 기기상에서 상시 수신되어 질문을 즉각 가공 처리합니다!
+                      </p>
+                    </div>
+
+                    {/* Korean-English Translation engine control */}
+                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                      <div className="flex justify-between items-center">
+                        <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
+                          <span className={`${translateKToEMode ? "bg-emerald-500 animate-pulse" : "bg-slate-600"} w-1.5 h-1.5 rounded-full`} />
+                          KOREAN-ENGLISH TRANSLATION (한-영 실시간 통역기):
+                        </label>
+                        <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTranslateKToEMode(true);
+                              setContinuousVoiceMode(true);
+                              setInputLanguage("ko-KR");
+                            }}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              translateKToEMode
+                                ? "bg-emerald-500/20 text-emerald-300 border-r border-slate-800"
+                                : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
+                            }`}
+                          >
+                            ENGAGED
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTranslateKToEMode(false)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              !translateKToEMode
+                                ? "bg-rose-950/40 text-rose-300"
+                                : "bg-transparent text-slate-500 hover:text-slate-400"
+                            }`}
+                          >
+                            STANDBY
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-400 leading-normal font-mono">
+                        활성화 시 한국어로 말하면 자동으로 <strong>영어로 실시간 번역 및 대화 처리</strong>하여 영어 합성 음성으로 즉각 대답해드립니다. ("번역 모드 켜줘", "번역 꺼줘" 지시어 작동)
+                      </p>
+                    </div>
+
+                    {/* Double-Clap Wake control */}
+                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                      <div className="flex justify-between items-center">
+                        <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px]">
+                          CLAP WAKE-UP CONTROL (박수 부팅 제어):
+                        </label>
+                        <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => setClapWakeEnabled(true)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              clapWakeEnabled
+                                ? "bg-cyan-500/20 text-cyan-300 border-r border-slate-800"
+                                : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
+                            }`}
+                          >
+                            ON
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setClapWakeEnabled(false)}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              !clapWakeEnabled
+                                ? "bg-rose-950/40 text-rose-300"
+                                : "bg-transparent text-slate-500 hover:text-slate-400"
+                            }`}
+                          >
+                            OFF
+                          </button>
+                        </div>
+                      </div>
+
+                      {clapWakeEnabled && (
+                        <div className="space-y-1.5 pt-0.5">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                              <span>ACOUSTIC DETECT SENSITIVITY: {clapSensitivity}</span>
+                              <span className="text-cyan-400">HIGHER = LIGHTER CLAP</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="1"
+                              max="10"
+                              step="1"
+                              value={clapSensitivity}
+                              onChange={(e) => setClapSensitivity(parseInt(e.target.value))}
+                              className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+                          
+                          <p className="text-[9px] text-slate-400 leading-normal font-mono mb-2">
+                            👏 <strong>이중 박수(Double Clap)</strong> 감지는 오동작 방지를 위해 오직 <strong>스텔스(절전/화면 꺼짐) 모드</strong>일 때만 활성화됩니다. 스텔스 상태에 있을 때 박수를 빠르게 두 번 치면 감지되어 자비스 화면이 원상 복구됩니다!
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Personal API Key Entry Field */}
                     <div className="space-y-2 pt-2 border-t border-cyan-500/10">
                       <div className="flex justify-between items-center">
@@ -1461,11 +2809,12 @@ I can still map schedules, process identity registries, and synthesize local mic
                       </p>
                     </div>
 
-                    {/* Offline Core Status & API Key Help */}
+                    {/* Offline Core Status & Help */}
                     <div className="space-y-2 pt-2 border-t border-cyan-500/10">
                       <div className="flex items-center justify-between">
                         <span className="text-cyan-500/80 animate-pulse">EMERGENCY OFFLINE CORE:</span>
                         <button
+                          type="button"
                           onClick={() => {
                             setOfflineMode(!offlineMode);
                           }}
@@ -1484,171 +2833,94 @@ I can still map schedules, process identity registries, and synthesize local mic
                           : "My primary logic currently routes requests to the cloud server. Rate limiting can occur on standard free quotas."
                         }
                       </p>
-                      <div className="bg-slate-950/60 border border-slate-800/80 p-2.5 rounded-xl space-y-1.5 mt-2">
-                        <div className="flex items-center gap-1.5 text-cyan-400 text-[10px] font-bold">
-                          <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-                          <span>RESTORE ONLINE MAINFRAME QUOTA</span>
-                        </div>
-                        <p className="text-[9px] text-slate-400 leading-relaxed font-mono">
-                          If you receive standard Google API <span className="text-red-400 font-semibold">Quota Exceeded (429/RESOURCE_EXHAUSTED)</span> errors, you can bypass them completely by adding your personal Gemini API Key inside AI Studio:
-                        </p>
-                        <ol className="list-decimal pl-4 text-[9px] text-cyan-300/80 space-y-1">
-                          <li>Click on the <strong>Settings (cog icon) ⚙️</strong> in the topmost AI Studio bar (or search for Secrets Panel).</li>
-                          <li>Add a secret named <code className="bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded text-cyan-400 font-bold">GEMINI_API_KEY</code> with your free key.</li>
-                          <li>Refresh & restart the application server.</li>
-                        </ol>
-                      </div>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
+            </motion.div>
 
-            {/* Console Interface Board (Middle Column) */}
-            <div className="md:col-span-5 flex flex-col space-y-4">
-              <JarvisConsole
-                messages={messages}
-                isListening={isListening}
-                transitText={transitText}
-                isOutputtingVoice={status === "thinking"}
-                voiceEngine={voiceEngine}
-                honorific={userGender === "female" ? "Ma'am" : "Sir"}
-              />
 
-              {/* Holographic YouTube Stream overlay */}
+            {/* Holographic Scheduling or Mathematical Array (Right Column - Expanded to md:col-span-6) */}
+            <motion.div
+              initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
+              animate={revealStep >= 2 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
+              transition={{ type: "spring", stiffness: 60, damping: 14 }}
+              className="md:col-span-6 flex flex-col h-auto min-h-[560px] space-y-3 relative"
+              style={{ pointerEvents: revealStep >= 2 ? "auto" : "none" }}
+            >
+              {revealStep === 2 && (
+                <motion.div
+                  initial={{ top: "-5%", opacity: 1 }}
+                  animate={{ top: "105%", opacity: [0, 1, 1, 0] }}
+                  transition={{ duration: 1.6, ease: "easeInOut" }}
+                  className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_rgba(34,211,238,0.95)] z-50 pointer-events-none"
+                />
+              )}
+
+              {/* Holographic YouTube Stream overlay inside Right Column */}
               <AnimatePresence>
                 {activeYoutubeQuery && (
-                  <div key="holographic-yt-player" className="w-full">
+                  <motion.div
+                    key="holographic-yt-player"
+                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                    className="w-full z-10"
+                  >
                     <HolographicYoutubePlayer
                       query={activeYoutubeQuery}
                       type={youtubePlayType === "channel" ? "channel" : "song"}
                       isMinimized={isYoutubeMinimized}
                       onClose={() => {
                         setActiveYoutubeQuery(null);
-                        setYoutubePlayType(null);
+                        setForceDirectTrackId(null);
                       }}
                       onToggleMinimize={() => setIsYoutubeMinimized(!isYoutubeMinimized)}
                     />
-                  </div>
+                  </motion.div>
                 )}
               </AnimatePresence>
 
-              {/* Voice Trigger Buttons & Manual CLI panel */}
-              <div className="flex gap-3">
-                {/* Instant Tap to Speak Voice Trigger */}
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleToggleVoiceInput}
-                  className={`flex-1 overflow-hidden py-3.5 px-4 rounded-xl font-mono text-xs font-semibold tracking-wider transition-all flex items-center justify-center gap-2 border shadow-lg ${
-                    isListening
-                      ? "bg-red-500 text-white border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
-                      : "bg-cyan-900/30 text-cyan-400 border-cyan-500/20 hover:bg-cyan-900/50 hover:border-cyan-400/40 shadow-[0_0_15px_rgba(6,182,212,0.05)]"
-                  }`}
-                >
-                  {isListening ? (
-                    <>
-                      <MicOff className="w-4.5 h-4.5 animate-pulse" />
-                      <span>TERMINATE VOICE CAPTURE</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="w-4.5 h-4.5" />
-                      <span>TRANSMIT VOICE COMMAND</span>
-                    </>
-                  )}
-                </motion.button>
-
-                {/* STOP/Mute audio playback */}
-                {status === "speaking" && (
-                  <motion.button
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    onClick={stopAllAudio}
-                    className="px-4 bg-slate-900 border border-red-500/30 text-red-400 hover:bg-red-950/20 rounded-xl transition-all flex items-center justify-center"
-                    title="Stop audio presentation"
+              {/* Holographic Google Map overlay inside Right Column */}
+              <AnimatePresence>
+                {activeMapQuery && (
+                  <motion.div
+                    key="holographic-map-locator"
+                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                    className="w-full z-10"
                   >
-                    <Square className="w-4 h-4 fill-red-400/20" />
-                  </motion.button>
+                    <HolographicMap
+                      query={activeMapQuery}
+                      isMinimized={isMapMinimized}
+                      onClose={() => {
+                        setActiveMapQuery(null);
+                      }}
+                      onToggleMinimize={() => setIsMapMinimized(!isMapMinimized)}
+                    />
+                  </motion.div>
                 )}
+              </AnimatePresence>
 
-                {/* Reset dialogue */}
-                <button
-                  onClick={handleClearTerminal}
-                  className="px-4 text-xs font-mono text-slate-500 hover:text-cyan-400 border border-slate-800 hover:border-cyan-500/20 bg-slate-900/30 rounded-xl transition-all"
-                  title="Clear matrix logs"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Manual keyboard terminal box */}
-              <form
-                id="jarvis-prompt-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSubmitPrompt(inputText);
-                }}
-                className="relative flex items-center bg-slate-900/40 border border-cyan-500/15 rounded-xl px-4 py-2 hover:border-cyan-500/30 transition-all focus-within:border-cyan-400 shadow-xl"
-              >
-                <input
-                  type="text"
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Enter manual override text here (English)..."
-                  className="w-full bg-transparent border-none text-slate-200 placeholder-slate-500 text-sm py-1.5 focus:outline-none pr-10 font-sans"
-                />
-                <button
-                  type="submit"
-                  disabled={!inputText.trim()}
-                  className={`absolute right-3 p-1.5 rounded-lg transition-all ${
-                    inputText.trim()
-                      ? "text-cyan-400 hover:bg-cyan-500/10 cursor-pointer"
-                      : "text-slate-600 cursor-not-allowed"
-                  }`}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-
-              {/* Dynamic Warning Notification if any STT / Mic issues occur */}
-              {errorNotice && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="p-3 bg-red-950/45 border border-red-500/30 text-red-200 text-xs font-mono rounded-xl flex items-center justify-between"
-                >
-                  <span>{errorNotice}</span>
-                  <button
-                    onClick={() => setErrorNotice(null)}
-                    className="text-red-400 hover:text-red-200 underline font-semibold cursor-pointer pl-4 text-[11px]"
-                  >
-                    DISMISS
-                  </button>
-                </motion.div>
-              )}
-            </div>
-
-            {/* Holographic Scheduling or Mathematical Array (Right Column) */}
-            <div className="md:col-span-3 flex flex-col h-[560px] space-y-3">
               {/* Tab Selector Buttons */}
-              <div className="grid grid-cols-2 gap-1 bg-slate-950/50 p-1 border border-cyan-500/10 rounded-xl font-mono text-[9px] relative z-10">
+              <div className="grid grid-cols-3 gap-1 bg-slate-950/50 p-1 border border-cyan-500/10 rounded-xl font-mono text-[9px] relative z-10">
                 <button
                   type="button"
                   onClick={() => setRightPanelMode("math")}
-                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                     rightPanelMode === "math"
                       ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
                       : "border border-transparent text-slate-500 hover:text-slate-300"
                   }`}
                 >
-                  <Calculator className="w-3.5 h-3.5" />
+                  <Calculator className="w-3.5 h-3.5 font-bold" />
                   <span>MATH CORE</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setRightPanelMode("schedule")}
-                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                     rightPanelMode === "schedule"
                       ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
                       : "border border-transparent text-slate-500 hover:text-slate-300"
@@ -1657,12 +2929,43 @@ I can still map schedules, process identity registries, and synthesize local mic
                   <Calendar className="w-3.5 h-3.5" />
                   <span>AGENDA TRACK</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setRightPanelMode("media")}
+                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                    rightPanelMode === "media"
+                      ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
+                      : "border border-transparent text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  <Headphones className="w-3.5 h-3.5" />
+                  <span>AUDIO FEED</span>
+                </button>
               </div>
 
               {rightPanelMode === "math" ? (
                 <MathProcessor onAskJarvis={handleSubmitPrompt} status={status} />
+              ) : rightPanelMode === "media" ? (
+                <HolographicMediaLoader
+                  onPlaySong={(query, type) => {
+                    const searchSuffix = type === "channel" ? " channel" : "";
+                    const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + searchSuffix)}`;
+                    window.open(ytUrl, "_blank");
+                  }}
+                  onCloseSong={() => {
+                    setActiveYoutubeQuery(null);
+                    setYoutubePlayType(null);
+                  }}
+                  activeQuery={activeYoutubeQuery}
+                  youtubePlayType={youtubePlayType}
+                  isMinimized={isYoutubeMinimized}
+                  onToggleMinimize={() => setIsYoutubeMinimized(!isYoutubeMinimized)}
+                  autoPlayOfflineCount={autoPlayOfflineCount}
+                  forceDirectTrackId={forceDirectTrackId}
+                  onClearForceDirectTrack={() => setForceDirectTrackId(null)}
+                />
               ) : (
-                <div className="flex-1 flex flex-col bg-slate-900/30 border border-cyan-400/10 backdrop-blur-md rounded-2xl p-4 shadow-[0_0_20px_rgba(6,182,212,0.03)] relative overflow-hidden h-[508px]">
+                <div className="stark-cyber-panel stark-cyber-bottom-decor flex-1 flex flex-col p-4 relative overflow-hidden h-[508px]">
                   {/* Holographic glowing scanline effect at the top */}
                   <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent animate-pulse" />
                   
@@ -1685,42 +2988,8 @@ I can still map schedules, process identity registries, and synthesize local mic
                     </div>
                   </div>
 
-                  {/* Quick Add Form */}
-                  <form onSubmit={handleAddScheduleManually} className="space-y-2 mb-3 bg-slate-950/40 border border-slate-800 p-2.5 rounded-xl">
-                    <div className="text-[10px] text-slate-400 font-mono uppercase tracking-wider mb-1 flex items-center justify-between">
-                      <span>Manual Override Registration</span>
-                      <Clock className="w-3 h-3 text-cyan-500/40" />
-                    </div>
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        placeholder="Time/Date (e.g., Tomorrow 2pm)..."
-                        value={manualTime}
-                        onChange={(e) => setManualTime(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] font-mono text-slate-100 outline-none focus:border-cyan-500/40 placeholder-slate-600"
-                      />
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          placeholder="Register agenda details..."
-                          value={manualTask}
-                          onChange={(e) => setManualTask(e.target.value)}
-                          required
-                          className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] font-mono text-slate-100 outline-none focus:border-cyan-500/40 placeholder-slate-600"
-                        />
-                        <button
-                          type="submit"
-                          className="p-1.5 bg-cyan-950 border border-cyan-500/30 hover:border-cyan-400 hover:bg-cyan-900/50 text-cyan-400 rounded-lg transition-all cursor-pointer"
-                          title="Add direct record"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </form>
-
                   {/* List Container with Custom Scrollbar */}
-                  <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/20 scrollbar-track-transparent pr-1 space-y-2 text-[11px] max-h-[220px]">
+                  <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/20 scrollbar-track-transparent pr-1 space-y-2 text-[11px] max-h-[340px]">
                     <AnimatePresence initial={false}>
                       {schedules.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-center p-3 border border-dashed border-slate-800 rounded-xl bg-slate-950/20 py-8">
@@ -1802,7 +3071,8 @@ I can still map schedules, process identity registries, and synthesize local mic
 
                 </div>
               )}
-            </div>
+            </motion.div>
+            </div> {/* <-- Closed inner grid container */}
           </motion.div>
         )}
       </AnimatePresence>

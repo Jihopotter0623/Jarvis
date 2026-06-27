@@ -39,7 +39,7 @@ export default function JarvisConsole({
   return (
     <div
       id="jarvis-terminal-mainframe"
-      className="flex flex-col bg-slate-950/80 border border-cyan-500/20 rounded-xl overflow-hidden shadow-[0_0_20px_rgba(6,182,212,0.15)] h-[400px]"
+      className="stark-cyber-panel stark-cyber-bottom-decor flex flex-col overflow-hidden h-[400px]"
     >
       {/* Console Top Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-cyan-500/10 text-xs font-mono text-cyan-400">

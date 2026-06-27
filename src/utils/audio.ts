@@ -71,10 +71,12 @@ export function speakWithBrowser(
 
   // Deep pitch and deliberate pace for bold male assistant vibe
   if (containsKorean) {
-    utterance.pitch = options.pitch ?? 0.70; // Hard-coded deeper pitch for Korean bold male vibe
-    utterance.rate = options.rate ?? 0.88;   // Slightly calmer rate for comfortable bold presence
+    // Force a deep baritone pitch (0.55) and elegant flow for a rich Korean male assistant voice
+    utterance.pitch = 0.55; 
+    utterance.rate = 0.92;
   } else {
-    utterance.pitch = options.pitch ?? 0.8;  // Deeper English pitch too for JARVIS
+    const basePitch = options.pitch ?? 0.8;
+    utterance.pitch = Math.max(0.45, basePitch - 0.15);  // Deeper English pitch too for JARVIS
     utterance.rate = options.rate ?? 0.95;   // Delicate rate
   }
 
@@ -100,6 +102,8 @@ export function speakWithBrowser(
         nameLower.includes("인준") ||
         nameLower.includes("gildong") ||
         nameLower.includes("길동") ||
+        nameLower.includes("himchan") ||
+        nameLower.includes("힘찬") ||
         (nameLower.includes("siri") && (nameLower.includes("남자") || nameLower.includes("male")))
       );
     });
@@ -126,7 +130,11 @@ export function speakWithBrowser(
       selectedVoice = koreanVoices[0];
     }
   } else if (options.voiceName) {
-    selectedVoice = voices.find((v) => v.name === options.voiceName);
+    const candidateVoice = voices.find((v) => v.name === options.voiceName);
+    // Only use the requested voice if its language matches the non-Korean text (i.e. is English)
+    if (candidateVoice && !candidateVoice.lang.startsWith("ko")) {
+      selectedVoice = candidateVoice;
+    }
   }
 
   if (!selectedVoice && !containsKorean) {
@@ -166,4 +174,34 @@ export function getSpeechRecognition(): any {
   const SpeechRecognition =
     (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
   return SpeechRecognition ? new SpeechRecognition() : null;
+}
+
+// Generate high-tech J.A.R.V.I.S. boot-up beep sequence
+export function playBootSound(): void {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioContextClass();
+    
+    const playBeep = (freq: number, startTime: number, duration: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, startTime);
+      
+      gain.gain.setValueAtTime(0.08, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    };
+    
+    playBeep(880, ctx.currentTime, 0.12);
+    playBeep(1200, ctx.currentTime + 0.14, 0.12);
+    playBeep(1600, ctx.currentTime + 0.28, 0.25);
+  } catch (e) {
+    console.error("Boot sound generation failed:", e);
+  }
 }
