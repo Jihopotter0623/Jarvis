@@ -68,7 +68,7 @@ export default function App() {
     () => (localStorage.getItem("jarvis_input_lang") as "ko-KR" | "en-US") || "ko-KR"
   );
   const [translateKToEMode, setTranslateKToEMode] = useState<boolean>(
-    () => localStorage.getItem("jarvis_translate_ktoe_mode") === "true"
+    () => localStorage.getItem("jarvis_translate_ktoe_mode") !== "false"
   );
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>(() => {
@@ -858,9 +858,11 @@ export default function App() {
     hasWelcomedClapRef.current = true;
     setHasWelcomedClap(true);
 
-    // Explicitly set language to English and set premium voice engine on first start as requested
-    setInputLanguage("en-US");
-    localStorage.setItem("jarvis_input_lang", "en-US");
+    // Explicitly set Korean-English translation mode and premium voice engine on first start as requested
+    setTranslateKToEMode(true);
+    localStorage.setItem("jarvis_translate_ktoe_mode", "true");
+    setInputLanguage("ko-KR");
+    localStorage.setItem("jarvis_input_lang", "ko-KR");
     
     setVoiceEngine("premium");
     localStorage.setItem("jarvis_voice_engine", "premium");
