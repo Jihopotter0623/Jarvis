@@ -26,6 +26,8 @@ import {
   Calculator,
   Headphones,
   Image,
+  X,
+  LayoutGrid,
 } from "lucide-react";
 import ArcReactor from "./components/ArcReactor";
 import AudioVisualizer from "./components/AudioVisualizer";
@@ -181,6 +183,9 @@ export default function App() {
   const [manualTime, setManualTime] = useState("");
   const [manualTask, setManualTask] = useState("");
   const [rightPanelMode, setRightPanelMode] = useState<"schedule" | "math" | "media">("math");
+  const [showRightPanel, setShowRightPanel] = useState<boolean>(
+    () => localStorage.getItem("jarvis_show_right_panel") !== "false"
+  );
 
   // YouTube Media States
   const [activeYoutubeQuery, setActiveYoutubeQuery] = useState<string | null>(null);
@@ -315,9 +320,10 @@ export default function App() {
     if (!initialized) return;
 
     // We only trigger this wake detector if:
-    // 1. isScreenSleep is true OR
-    // 2. alwaysListeningEn is true, status is "idle", isListening is false, and bypassWakeWord is false
-    const shouldWakeListen = isScreenSleep || (alwaysListeningEn && status === "idle" && !isListening && !bypassWakeWord);
+    // 1. alwaysListeningEn is true, status is "idle", isListening is false, and bypassWakeWord is false
+    // Note: We EXCLUDE isScreenSleep (stealth mode) from voice wake-up to prevent accidental deactivation by ambient noise false-triggers.
+    // In stealth mode, the user must clap to wake up.
+    const shouldWakeListen = !isScreenSleep && (alwaysListeningEn && status === "idle" && !isListening && !bypassWakeWord);
     if (!shouldWakeListen) return;
 
     let wakeRecognition: any = null;
@@ -1036,13 +1042,14 @@ export default function App() {
           extractedQuery = isChannel ? "MKBHD" : "Lofi hip hop beats";
         }
 
-        const querySuffix = isChannel ? " channel" : "";
-        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(extractedQuery + querySuffix)}`;
-        window.open(ytUrl, "_blank");
+        setActiveYoutubeQuery(extractedQuery);
+        setYoutubePlayType(isChannel ? "channel" : "song");
+        setIsYoutubeMinimized(false);
+        setRightPanelMode("media");
 
         reply = isChannel
-          ? `Certainly, ${honorific}. Redirecting you to YouTube in a new tab for '${extractedQuery}' channel.`
-          : `Of course, ${honorific}. Redirecting you to YouTube in a new tab for '${extractedQuery}'.`;
+          ? `Certainly, ${honorific}. Connecting carrier stream to '${extractedQuery}' channel directly on the holographic media panel.`
+          : `Of course, ${honorific}. Tuning frequency to '${extractedQuery}' directly on the holographic media panel.`;
       } else if (isMapLocation) {
         let extractedQuery = text
           .replace(/(지도로|지도에서|지도|map|위치|어디야|어디있어|어디있니|약도|보여줘|알려줘|찾아줘|locate|find|where is|location of|coordinates of)/gi, "")
@@ -1059,6 +1066,18 @@ export default function App() {
       } else if (isStealthModeCmd) {
         setIsScreenSleep(true);
         reply = `Understood, ${honorific}. Engaging system stealth mode parameters immediately. Visual core dashboard suspended. Background voice receiver remains active.`;
+      } else if (lowerText.includes("이창을없") || lowerText.includes("창없애") || lowerText.includes("창닫") || lowerText.includes("오른쪽창꺼") || lowerText.includes("오른쪽창없") || lowerText.includes("오른쪽창닫") || lowerText.includes("이창닫") || lowerText.includes("화면닫") || lowerText.includes("hiderightpanel") || lowerText.includes("closerightpanel") || lowerText.includes("closewindow") || lowerText.includes("hidepanel") || lowerText.includes("closepanel") || lowerText.includes("coprocessoroff")) {
+        setShowRightPanel(false);
+        localStorage.setItem("jarvis_show_right_panel", "false");
+        reply = containsKo
+          ? `예 주인님. 오른쪽 보조 연산 패널을 비활성화하고 주 화면을 최대 크기로 확장합니다.`
+          : `Understood, ${honorific}. Powering down auxiliary mathematical processor and expanding core console.`;
+      } else if (lowerText.includes("오른쪽창켜") || lowerText.includes("오른쪽창보") || lowerText.includes("오른쪽화면켜") || lowerText.includes("오른쪽화면보") || lowerText.includes("창열어") || lowerText.includes("창켜") || lowerText.includes("showrightpanel") || lowerText.includes("openrightpanel") || lowerText.includes("coprocessoron") || lowerText.includes("showpanel") || lowerText.includes("openpanel")) {
+        setShowRightPanel(true);
+        localStorage.setItem("jarvis_show_right_panel", "true");
+        reply = containsKo
+          ? `알겠습니다 주인님. 오른쪽 보조 코프로세서 패널의 전력을 회복하고 전면 시각 기하 장치를 온라인 상태로 활성화합니다.`
+          : `Yes, ${honorific}. Auxiliary co-processor system telemetry is now fully active on the visual subsystem.`;
       } else if (isTranslateRequest) {
         // Translation request - user specifically asked for translation or Korean status briefing
         reply = `주인님, 시스템 작동 보고를 한글로 브리핑해 드립니다. 현재 메인프레임의 외부 온라인 한도(429 API Quota Exceeded)로 인해 보조 로컬 칩셋을 활용하여 오프라인 백업 프로토콜이 성공적으로 동기화된 상태입니다. 대시보드 일정 수립 및 음성 안내 등 일상의 주요 제어 명령은 지연 없이 완전 가동 중입니다. 외부 온라인 네트워크를 즉시 복원하고 싶으시다면 Settings > Secrets 메뉴에 개인 API Key를 충전해 보십시오.`;
@@ -1314,6 +1333,142 @@ export default function App() {
       return;
     }
 
+    // Close holographic player / map overlay or hide right co-processor panel intercept
+    const isCloseMediaOrMap = 
+      cleanNoSpaces.includes("플레이어꺼") || 
+      cleanNoSpaces.includes("플레이어닫") || 
+      cleanNoSpaces.includes("유튜브꺼") || 
+      cleanNoSpaces.includes("유튜브닫") || 
+      cleanNoSpaces.includes("유튜브종료") || 
+      cleanNoSpaces.includes("음악꺼") || 
+      cleanNoSpaces.includes("노래꺼") || 
+      cleanNoSpaces.includes("음악닫") || 
+      cleanNoSpaces.includes("노래닫") || 
+      cleanNoSpaces.includes("이거꺼") || 
+      cleanNoSpaces.includes("이것꺼") || 
+      cleanNoSpaces.includes("지도꺼") || 
+      cleanNoSpaces.includes("지도닫") || 
+      cleanNoSpaces.includes("closeplayer") || 
+      cleanNoSpaces.includes("stopplayer") || 
+      cleanNoSpaces.includes("closeyoutube") || 
+      cleanNoSpaces.includes("stopyoutube") || 
+      cleanNoSpaces.includes("closemap");
+
+    const isGeneralCloseRequest =
+      cleanNoSpaces.includes("없에줘") || 
+      cleanNoSpaces.includes("없애줘") || 
+      cleanNoSpaces.includes("없에줘이것") ||
+      cleanNoSpaces.includes("없애줘이것") ||
+      cleanNoSpaces.includes("없에줘이것을") ||
+      cleanNoSpaces.includes("없애줘이것을") ||
+      cleanNoSpaces.includes("이것을없") ||
+      cleanNoSpaces.includes("이것없") ||
+      cleanNoSpaces.includes("이거없");
+
+    // If there is an active Youtube player or Map, prioritisng closing them first!
+    if ((isCloseMediaOrMap || isGeneralCloseRequest) && (activeYoutubeQuery || activeMapQuery)) {
+      setActiveYoutubeQuery(null);
+      setForceDirectTrackId(null);
+      setActiveMapQuery(null);
+      
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR"
+        ? "예 주인님, 활성화된 홀로그램 미디어 스트림 및 맵 로케이터 연결을 해제하고 해당 창을 즉시 종료합니다."
+        : `Understood, ${userHonorific}. Terminating live holographic media feed and map locator subsystem instantly.`;
+        
+      const jarvisCloseMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_close_media`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisCloseMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(replyMsg);
+      setErrorNotice("🛸 Holographic media feeds disengaged.");
+      return;
+    }
+
+    // Right side co-processor panel toggle voice command intercept
+    const isHideRightPanel = 
+      cleanNoSpaces.includes("이창을없") || 
+      cleanNoSpaces.includes("이창없") || 
+      cleanNoSpaces.includes("창없애") || 
+      cleanNoSpaces.includes("창닫") || 
+      cleanNoSpaces.includes("오른쪽창꺼") || 
+      cleanNoSpaces.includes("오른쪽창없") || 
+      cleanNoSpaces.includes("오른쪽창닫") || 
+      cleanNoSpaces.includes("이창닫") || 
+      cleanNoSpaces.includes("화면닫") || 
+      cleanNoSpaces.includes("hiderightpanel") || 
+      cleanNoSpaces.includes("closerightpanel") || 
+      cleanNoSpaces.includes("closewindow") || 
+      cleanNoSpaces.includes("hidepanel") || 
+      cleanNoSpaces.includes("closepanel") || 
+      cleanNoSpaces.includes("coprocessoroff") ||
+      isGeneralCloseRequest;
+
+    const isShowRightPanel = 
+      cleanNoSpaces.includes("오른쪽창켜") || 
+      cleanNoSpaces.includes("오른쪽창보") || 
+      cleanNoSpaces.includes("오른쪽화면켜") || 
+      cleanNoSpaces.includes("오른쪽화면보") || 
+      cleanNoSpaces.includes("창열어") || 
+      cleanNoSpaces.includes("창켜") || 
+      cleanNoSpaces.includes("showrightpanel") || 
+      cleanNoSpaces.includes("openrightpanel") || 
+      cleanNoSpaces.includes("coprocessoron") || 
+      cleanNoSpaces.includes("showpanel") || 
+      cleanNoSpaces.includes("openpanel");
+
+    if (isHideRightPanel) {
+      setShowRightPanel(false);
+      localStorage.setItem("jarvis_show_right_panel", "false");
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR" 
+        ? "예 주인님. 오른쪽 보조 연산 패널을 비활성화하고 주 화면을 최대 크기로 확장합니다."
+        : `Understood, ${userHonorific}. Powering down auxiliary mathematical processor and expanding core console.`;
+      
+      const jarvisPanelMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_panel_hide`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisPanelMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(replyMsg);
+      setErrorNotice("🖥️ Auxiliary Co-Processor deactivated.");
+      return;
+    }
+
+    if (isShowRightPanel) {
+      setShowRightPanel(true);
+      localStorage.setItem("jarvis_show_right_panel", "true");
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR" 
+        ? "알겠습니다 주인님. 오른쪽 보조 코프로세서 패널의 전력을 회복하고 전면 시각 기하 장치를 온라인 상태로 활성화합니다."
+        : `Yes, ${userHonorific}. Auxiliary co-processor system telemetry is now fully active on the visual subsystem.`;
+      
+      const jarvisPanelMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_panel_show`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisPanelMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(replyMsg);
+      setErrorNotice("🖥️ Auxiliary Co-Processor activated.");
+      return;
+    }
+
     // Extract image payload if attached
     let imagePayload: { data: string; mimeType: string } | null = null;
     if (selectedImage) {
@@ -1425,9 +1580,11 @@ export default function App() {
       const ytPlayMatch = newJarvisText.match(/\[YOUTUBE_PLAY:\s*(.+?)\]/i);
       if (ytPlayMatch && ytPlayMatch[1]) {
         const query = ytPlayMatch[1].trim();
-        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-        window.open(ytUrl, "_blank");
-        console.log("JARVIS playing song in new window:", query);
+        setActiveYoutubeQuery(query);
+        setYoutubePlayType("song");
+        setIsYoutubeMinimized(false);
+        setRightPanelMode("media");
+        console.log("JARVIS playing song directly in holographic player:", query);
         
         // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
         newJarvisText = newJarvisText.replace(/\[YOUTUBE_PLAY:\s*.+?\]/gi, "").trim();
@@ -1437,9 +1594,11 @@ export default function App() {
       const ytChannelMatch = newJarvisText.match(/\[YOUTUBE_CHANNEL:\s*(.+?)\]/i);
       if (ytChannelMatch && ytChannelMatch[1]) {
         const query = ytChannelMatch[1].trim();
-        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + " channel")}`;
-        window.open(ytUrl, "_blank");
-        console.log("JARVIS playing channel in new window:", query);
+        setActiveYoutubeQuery(query);
+        setYoutubePlayType("channel");
+        setIsYoutubeMinimized(false);
+        setRightPanelMode("media");
+        console.log("JARVIS playing channel directly in holographic player:", query);
         
         // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
         newJarvisText = newJarvisText.replace(/\[YOUTUBE_CHANNEL:\s*.+?\]/gi, "").trim();
@@ -1719,7 +1878,9 @@ I can still map schedules, process identity registries, and synthesize local mic
                 J.A.R.V.I.S. STEALTH STANDBY ACTIVE
               </p>
               <p className="text-[9px] font-sans text-cyan-400/40 tracking-wider">
-                🎙️ "자비스" (Jarvis) 호출, 👏 박수 두번, 또는 화면을 터치해서 깨워보세요
+                {inputLanguage === "ko-KR"
+                  ? "👏 박수 두 번을 치거나 화면을 터치하여 깨워보세요"
+                  : "👏 Double clap, or tap the screen to wake up"}
               </p>
             </div>
           </div>
@@ -2140,7 +2301,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                 initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
                 animate={revealStep >= 1 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
                 transition={{ type: "spring", stiffness: 60, damping: 14 }}
-                className="md:col-span-6 flex flex-col space-y-4 relative"
+                className={`${showRightPanel ? "md:col-span-6" : "md:col-span-12"} flex flex-col space-y-4 relative transition-all duration-300`}
                 style={{ pointerEvents: revealStep >= 1 ? "auto" : "none" }}
               >
               {revealStep === 1 && (
@@ -2156,6 +2317,23 @@ I can still map schedules, process identity registries, and synthesize local mic
                 id="jarvis-reactor-panel"
                 className="stark-cyber-panel stark-cyber-bottom-decor p-6 flex flex-col items-center justify-center relative"
               >
+                {/* Restore Right Co-processor Panel Button */}
+                {!showRightPanel && (
+                  <button
+                    onClick={() => {
+                      setShowRightPanel(true);
+                      localStorage.setItem("jarvis_show_right_panel", "true");
+                      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                      speakOutput(`Restoring primary visual telemetry arrays and co-processor diagnostics, ${userHonorific}.`);
+                    }}
+                    className="absolute top-4 left-4 px-2.5 py-1.5 bg-cyan-950/40 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 rounded-lg text-[10px] font-bold font-mono tracking-wider flex items-center gap-1.5 animate-pulse transition-all cursor-pointer"
+                    title="Restore Co-processor Panel"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>ACTIVATE CO-PROC</span>
+                  </button>
+                )}
+
                 {/* Floating Micro Config Button */}
                 <button
                   onClick={() => setShowSettings(!showSettings)}
@@ -2843,8 +3021,9 @@ I can still map schedules, process identity registries, and synthesize local mic
 
 
             {/* Holographic Scheduling or Mathematical Array (Right Column - Expanded to md:col-span-6) */}
-            <motion.div
-              initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
+            {showRightPanel && (
+              <motion.div
+                initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
               animate={revealStep >= 2 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
               transition={{ type: "spring", stiffness: 60, damping: 14 }}
               className="md:col-span-6 flex flex-col h-auto min-h-[560px] space-y-3 relative"
@@ -2906,42 +3085,57 @@ I can still map schedules, process identity registries, and synthesize local mic
               </AnimatePresence>
 
               {/* Tab Selector Buttons */}
-              <div className="grid grid-cols-3 gap-1 bg-slate-950/50 p-1 border border-cyan-500/10 rounded-xl font-mono text-[9px] relative z-10">
+              <div className="flex items-center gap-2 relative z-10">
+                <div className="flex-1 grid grid-cols-3 gap-1 bg-slate-950/50 p-1 border border-cyan-500/10 rounded-xl font-mono text-[9px]">
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelMode("math")}
+                    className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      rightPanelMode === "math"
+                        ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    <Calculator className="w-3.5 h-3.5 font-bold" />
+                    <span>MATH CORE</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelMode("schedule")}
+                    className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      rightPanelMode === "schedule"
+                        ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>AGENDA TRACK</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelMode("media")}
+                    className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      rightPanelMode === "media"
+                        ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    <Headphones className="w-3.5 h-3.5" />
+                    <span>AUDIO FEED</span>
+                  </button>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setRightPanelMode("math")}
-                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                    rightPanelMode === "math"
-                      ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
-                      : "border border-transparent text-slate-500 hover:text-slate-300"
-                  }`}
+                  onClick={() => {
+                    setShowRightPanel(false);
+                    localStorage.setItem("jarvis_show_right_panel", "false");
+                    const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                    speakOutput(`Powering down auxiliary panel display, ${userHonorific}.`);
+                  }}
+                  className="p-2 bg-slate-950/50 hover:bg-rose-950/35 border border-slate-800 hover:border-rose-500/30 text-slate-500 hover:text-rose-400 rounded-xl transition-all cursor-pointer flex items-center justify-center"
+                  title="Close right panel"
                 >
-                  <Calculator className="w-3.5 h-3.5 font-bold" />
-                  <span>MATH CORE</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRightPanelMode("schedule")}
-                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                    rightPanelMode === "schedule"
-                      ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
-                      : "border border-transparent text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>AGENDA TRACK</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRightPanelMode("media")}
-                  className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                    rightPanelMode === "media"
-                      ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
-                      : "border border-transparent text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  <Headphones className="w-3.5 h-3.5" />
-                  <span>AUDIO FEED</span>
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
 
@@ -2950,9 +3144,10 @@ I can still map schedules, process identity registries, and synthesize local mic
               ) : rightPanelMode === "media" ? (
                 <HolographicMediaLoader
                   onPlaySong={(query, type) => {
-                    const searchSuffix = type === "channel" ? " channel" : "";
-                    const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + searchSuffix)}`;
-                    window.open(ytUrl, "_blank");
+                    setActiveYoutubeQuery(query);
+                    setYoutubePlayType(type);
+                    setIsYoutubeMinimized(false);
+                    console.log("Playing song directly via panel preset click:", query);
                   }}
                   onCloseSong={() => {
                     setActiveYoutubeQuery(null);
@@ -3074,6 +3269,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                 </div>
               )}
             </motion.div>
+            )}
             </div> {/* <-- Closed inner grid container */}
           </motion.div>
         )}
