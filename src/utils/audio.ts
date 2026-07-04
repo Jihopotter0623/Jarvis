@@ -161,7 +161,10 @@ export function speakWithBrowser(
 
   if (!containsKorean) {
     // Lock strictly to English UK Male voice
-    const gbVoices = voices.filter(v => v.lang.toLowerCase().replace('_', '-').startsWith('en-gb'));
+    const gbVoices = voices.filter(v => {
+      const langLower = v.lang.toLowerCase().replace('_', '-');
+      return langLower.startsWith('en-gb') || langLower.startsWith('en-uk');
+    });
     
     // 1. Look for explicit "male" inside en-GB voices
     selectedVoice = gbVoices.find(v => v.name.toLowerCase().includes("male"));
@@ -180,28 +183,50 @@ export function speakWithBrowser(
       const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
       selectedVoice = allEnVoices.find(v => {
         const nameLower = v.name.toLowerCase();
-        return (nameLower.includes("uk") || nameLower.includes("united kingdom") || nameLower.includes("great britain")) && nameLower.includes("male");
+        return (nameLower.includes("uk") || nameLower.includes("united kingdom") || nameLower.includes("great britain") || nameLower.includes("gb")) && nameLower.includes("male");
       });
     }
 
-    // 4. Any en-GB voice that is NOT obviously female
+    // 4. Look for ANY English Male voice (including en-US, en-AU, etc.) with explicit "male" keyword or known male names
+    if (!selectedVoice) {
+      const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
+      selectedVoice = allEnVoices.find(v => {
+        const nameLower = v.name.toLowerCase();
+        return nameLower.includes("male") || 
+               nameLower.includes("daniel") || 
+               nameLower.includes("george") || 
+               nameLower.includes("oliver") || 
+               nameLower.includes("david") || 
+               nameLower.includes("alex") || 
+               nameLower.includes("fred") || 
+               nameLower.includes("tom") || 
+               nameLower.includes("james");
+      });
+    }
+
+    // 5. Any en-GB voice that is NOT obviously female
     if (!selectedVoice && gbVoices.length > 0) {
       selectedVoice = gbVoices.find(v => {
         const nameLower = v.name.toLowerCase();
-        return !nameLower.includes("female") && !nameLower.includes("hazel") && !nameLower.includes("susan") && !nameLower.includes("zira") && !nameLower.includes("stephanie");
+        const femaleNames = ["female", "hazel", "susan", "zira", "stephanie", "serena", "kate", "fiona", "moira", "veena", "tessa", "samantha", "karen", "victoria", "heather", "siri"];
+        return !femaleNames.some(femaleName => nameLower.includes(femaleName));
       });
       if (!selectedVoice) {
         selectedVoice = gbVoices[0];
       }
     }
 
-    // 5. General English Male voice
+    // 6. Any general English voice that is NOT obviously female
     if (!selectedVoice) {
       const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
-      selectedVoice = allEnVoices.find(v => v.name.toLowerCase().includes("male"));
+      selectedVoice = allEnVoices.find(v => {
+        const nameLower = v.name.toLowerCase();
+        const femaleNames = ["female", "hazel", "susan", "zira", "stephanie", "serena", "kate", "fiona", "moira", "veena", "tessa", "samantha", "karen", "victoria", "heather", "siri"];
+        return !femaleNames.some(femaleName => nameLower.includes(femaleName));
+      });
     }
 
-    // 6. Any English voice
+    // 7. Last resort: Any English voice
     if (!selectedVoice) {
       selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith('en'));
     }
