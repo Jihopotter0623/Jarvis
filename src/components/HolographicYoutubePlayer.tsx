@@ -22,6 +22,8 @@ interface HolographicYoutubePlayerProps {
   isMinimized: boolean;
   onClose: () => void;
   onToggleMinimize: () => void;
+  isFloating?: boolean;
+  onToggleFloating?: (floating: boolean) => void;
 }
 
 export default function HolographicYoutubePlayer({
@@ -30,6 +32,8 @@ export default function HolographicYoutubePlayer({
   isMinimized,
   onClose,
   onToggleMinimize,
+  isFloating: controlledIsFloating,
+  onToggleFloating,
 }: HolographicYoutubePlayerProps) {
   
   const [resolvedVideoId, setResolvedVideoId] = React.useState<string | null>(null);
@@ -37,10 +41,22 @@ export default function HolographicYoutubePlayer({
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
   const [audioOnly, setAudioOnly] = React.useState<boolean>(true);
   
-  const [isFloating, setIsFloating] = React.useState<boolean>(() => {
+  const [internalIsFloating, setInternalIsFloating] = React.useState<boolean>(() => {
     const saved = localStorage.getItem("jarvis_yt_floating");
     return saved !== "false"; // Default to true (Floating)
   });
+
+  const isFloating = controlledIsFloating !== undefined ? controlledIsFloating : internalIsFloating;
+
+  const handleToggleFloating = () => {
+    const nextVal = !isFloating;
+    if (onToggleFloating) {
+      onToggleFloating(nextVal);
+    } else {
+      setInternalIsFloating(nextVal);
+      localStorage.setItem("jarvis_yt_floating", nextVal.toString());
+    }
+  };
 
   const [autoNewWindow, setAutoNewWindow] = React.useState<boolean>(() => {
     const saved = localStorage.getItem("jarvis_yt_auto_new_window");
@@ -48,8 +64,10 @@ export default function HolographicYoutubePlayer({
   });
 
   React.useEffect(() => {
-    localStorage.setItem("jarvis_yt_floating", isFloating.toString());
-  }, [isFloating]);
+    if (controlledIsFloating === undefined) {
+      localStorage.setItem("jarvis_yt_floating", internalIsFloating.toString());
+    }
+  }, [internalIsFloating, controlledIsFloating]);
 
   React.useEffect(() => {
     localStorage.setItem("jarvis_yt_auto_new_window", autoNewWindow.toString());
@@ -219,7 +237,7 @@ export default function HolographicYoutubePlayer({
             {/* Float/Pin Toggle Switch */}
             <button
               type="button"
-              onClick={() => setIsFloating(!isFloating)}
+              onClick={handleToggleFloating}
               className={`p-1 rounded transition-all flex items-center justify-center ${
                 isFloating 
                   ? "bg-cyan-500/25 text-cyan-300 hover:bg-cyan-500/40" 

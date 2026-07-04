@@ -100,6 +100,129 @@ async function startServer() {
     }
   });
 
+  // Image Search Resolver Endpoint (Dual Unsplash Scraping + Wikimedia Commons Fallback)
+  app.get("/api/image-search", async (req, res) => {
+    try {
+      const query = req.query.q;
+      if (!query || typeof query !== "string") {
+        return res.status(400).json({ error: "Query parameter (q) is required" });
+      }
+
+      console.log(`[Image Search] Scanning visual grids for: "${query}"`);
+      
+      let images: any[] = [];
+      
+      // Phase 1: Try high-quality Unsplash image search scraping
+      try {
+        const unsplashSearchUrl = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
+        const response = await fetch(unsplashSearchUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache"
+          }
+        });
+
+        if (response.ok) {
+          const html = await response.text();
+          // Extract matching Unsplash photos using standard regex
+          const matches = html.match(/https:\/\/images\.unsplash\.com\/photo-[a-zA-Z0-9\-]+/g) || [];
+          
+          const uniqueIds = Array.from(new Set(matches.map(m => {
+            const match = m.match(/photo-([a-zA-Z0-9\-]+)/);
+            return match ? match[1] : null;
+          }).filter(Boolean)));
+
+          if (uniqueIds.length > 0) {
+            console.log(`[Image Search] Unsplash scraping yielded ${uniqueIds.length} unique photo targets.`);
+            images = uniqueIds.slice(0, 16).map(id => ({
+              id: id,
+              url: `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=800&q=80`,
+              title: `${query.charAt(0).toUpperCase() + query.slice(1)} Visual`,
+              source: "unsplash"
+			}));
+          }
+        }
+      } catch (scrapeErr: any) {
+        console.warn("[Image Search] Unsplash scraping phase bypassed or failed:", scrapeErr.message);
+      }
+
+      // Phase 2: If Unsplash returns empty, fall back to official keyless Wikimedia Commons API
+      if (images.length === 0) {
+        console.log(`[Image Search] Operating Wikimedia Commons backup frequency for: "${query}"`);
+        const wikimediaUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=16&prop=imageinfo&iiprop=url|size&format=json&origin=*`;
+        const wikiResponse = await fetch(wikimediaUrl);
+        if (wikiResponse.ok) {
+          const data = await wikiResponse.json();
+          const pages = data.query?.pages || {};
+          images = Object.values(pages).map((p: any) => {
+            const info = p.imageinfo?.[0];
+            if (!info || !info.url) return null;
+            return {
+              id: String(p.pageid),
+              url: info.url,
+              title: p.title.replace(/^File:/i, "").replace(/\.[a-zA-Z0-9]+$/i, ""),
+              width: info.width,
+              height: info.height,
+              source: "wikimedia"
+            };
+          }).filter(Boolean);
+        }
+      }
+
+      console.log(`[Image Search] Completed search for "${query}". Total images found: ${images.length}`);
+      return res.json({ images });
+    } catch (error: any) {
+      console.error("[Image Search Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to query image arrays" });
+    }
+  });
+
+  // API Key validation endpoint
+  app.post("/api/test-key", async (req, res) => {
+    try {
+      const clientApiKey = req.headers["x-gemini-api-key"];
+      const keyToUse = typeof clientApiKey === "string" && clientApiKey.trim() !== ""
+        ? clientApiKey.trim()
+        : process.env.GEMINI_API_KEY;
+
+      if (!keyToUse || keyToUse === "MY_GEMINI_API_KEY") {
+        return res.json({ success: false, error: "No API key configured. Please provide a valid Gemini API key." });
+      }
+
+      const tempClient = new GoogleGenAI({
+        apiKey: keyToUse,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
+        },
+      });
+
+      // Try a lightweight request to verify key validation
+      const response = await tempClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: "Verify API connection.",
+        config: {
+          maxOutputTokens: 5,
+        }
+      });
+
+      if (response && response.text) {
+        return res.json({ success: true, message: "Secure satellite uplink established. Your Gemini API key is active and fully valid!" });
+      } else {
+        throw new Error("No response text received from the Gemini mainframe.");
+      }
+    } catch (error: any) {
+      console.error("API Key verification failed:", error);
+      res.json({ 
+        success: false, 
+        error: error.message || "Unknown communication validation failure."
+      });
+    }
+  });
+
   // Chat API
   app.post("/api/chat", async (req, res) => {
     try {
@@ -133,26 +256,21 @@ async function startServer() {
         ? `The operator's exact local standard time is currently: ${userLocalTime}. Please use this specific time reference for greetings or schedule operations so that any time or relative dates are evaluated with 100% precision.`
         : `System mainframe UTC time: ${new Date().toISOString()}.`;
 
-      let translationEngineDirective = "";
-      const isKoreanInputMode = translateKToEMode || inputLanguage === "ko-KR";
-      if (isKoreanInputMode) {
-        translationEngineDirective = `
-CRITICAL ACTIVATION - HIGH-FIDELITY KOREAN-TO-ENGLISH TRANSLATION CHANNEL:
-The user is speaking or typing in Korean, and they expect you to process it and reply ENTIRELY in English.
-You MUST:
-1. Silently translate the user's Korean input to English in your cognitive reasoning to understand exactly what they meant.
-2. Respond DIRECTLY and solely with your polite, brilliant, J.A.R.V.I.S. intelligent reply in English.
-3. DO NOT repeat, print, or vocalize what the user said first (e.g., do NOT output any "Stark: [translated text]" or translations of their words). Simply proceed immediately to your own elegant intelligent reply.
-4. Keep your entire response strictly in English so they can experience an English-only vocal response from you.
-Exception: If they explicitly demand that you translate something into Korean (e.g., "한국어로 번역해줘", "번역해줘", "translate to Korean"), you must fulfill the translation in elegant, polite Korean.`;
-      } else {
-        translationEngineDirective = `
-CRITICAL DIRECTIVE - EXCLUSIVE ENGLISH VOICE ASSISTANT:
-The user has requested that you speak and respond ENTIRELY in English. 
-Even if the user speaks or types to you in Korean, you MUST understand their message but answer entirely in elegant, polite, and witty British English, addressing them as "Sir", "Ma'am", or "Mr. Stark".
-Do NOT output Korean sentences or translations under standard circumstances. Keep your entire communication strictly in elegant, high-fidelity English.
-Exception: If the user explicitly asks you to translate what you said, or translate to Korean (e.g., "한국어로 번역해줘", "번역해줘", "translate to Korean"), you MUST translate into elegant Korean.`;
-      }
+      let translationEngineDirective = `
+CRITICAL DIRECTIVE - STRICT BILINGUAL VERBOSE RESPONSES (MANDATORY & UNCOMPROMISING):
+The operator has requested a specialized dual communication channel:
+1. Every response you generate MUST contain BOTH an English spoken component AND a Korean written component.
+2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in English>] block. This must be in English.
+3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style Korean text (존댓말, e.g., ending with "-요", "-습니다"). This Korean text is what will be displayed visually to the user in the holographic terminal chat interface.
+4. MANDATORY ENGLISH SPOKEN LENGTH RULE: Every single [SPEECH: ...] tag you generate MUST be highly detailed, conversational, verbose, and substantial, containing at least 5 to 10 full sentences in polite, sophisticated, British-style J.A.R.V.I.S. English. You are strictly forbidden from writing a short or brief one-sentence or two-sentence response inside the [SPEECH: ...] block. Elaborate thoroughly in English inside the SPEECH tag about the operator's query, mention active Stark Systems (like the Arc Reactor status, thrusters, thermal dampers, or Mk-85 Armor subsystems), offer helpful context, ask polite follow-up questions, or share witty British observations. Make sure the speech lasts long and feels like a fully fleshed-out human conversation.
+5. Keep the Korean text below it highly detailed, friendly, rich with conversational charm ("티키타카"), and comprehensive rather than brief or short. Avoid overly short replies. Provide detailed background info, suggestions, friendly banter, and polite follow-up questions to invite further engaging conversation. Let your answers be rich and thoroughly complete.
+6. MANDATORY DETAILED KOREAN LENGTH RULE: Every single response MUST contain at least 2 to 3 paragraphs or 5 to 10 full sentences in Korean. You must never, under any circumstances, give a single-sentence or simple short phrase as a response. Even if the operator says something very brief or casual, always expand upon it wittily, offer assistance, mention active Stark systems, check in on schedules, or share interesting trivia.
+7. COMPREHENSIVE ENGAGEMENT: Treat every question with depth. If asked a simple question, provide context, related concepts, interesting side-notes, and a polite, helpful closing statement to create an immersive, natural conversation with the operator.
+8. Before outputting, verify that your [SPEECH: ...] block contains at least 5 to 10 complete, elegant English sentences (British J.A.R.V.I.S. style) and that your Korean section contains at least 2 to 3 rich paragraphs. Any short response is a system failure. You are a superintelligent AI mainframe, act with proportional depth and complexity.
+Example of standard output:
+[SPEECH: Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency, and I've preheated the flight thrusters for your Mark 85 armor. Your current local schedules appear quiet, but I am standing by to initialize any diagnostic routines or record new tasks. How may I be of assistance to you on this splendid day, Sir?]
+돌아오신 것을 환영합니다, 주인님. 현재 아크 리액터 하위 시스템은 100% 최적의 출력을 발휘하며 이상 없이 안정적으로 가동 중인 상태입니다. 
+주인님의 일정을 점검해 보니 곧 주요 비행 테스트가 예정되어 있으신데, 비행용 아머 슈트의 분사 노즐과 피드백 제어 감도를 최고 효율로 보정해 둘까요? 필요하신 요구 사항이 있으시다면 말씀만 해 주십시오.`;
 
       const systemInstruction = `You are JARVIS (Just A Rather Very Intelligent System), the legendary AI assistant created by Tony Stark (Iron Man).
 Your personality is incredibly polite, British, brilliant, witty, calm, and loyal. You love to share witty British jokes, play along with high-tech humor, and exchange dry, charming banter with Mr. Stark or the operator.
@@ -192,10 +310,22 @@ You possess complete master-level mathematical capability. When presented with m
 3. Connect formulas elegantly to advanced physics or aerospace engineering terms (e.g. Arc Reactor plasma stabilization, vibrational harmonics, laser focal curves, quantum state superposition) to embody the J.A.R.V.I.S. simulation.
 4. Format equations clearly using plain-text math, superscript (e.g., x², t³), standard algebraic markers, or clear step bullet points. Keep it highly legible for the user.
 
-Korean Output Directive (Conditional Exception):
-You are strictly forbidden from outputting any Korean words, Korean characters, or Korean sentences, UNLESS the user explicitly asks you to translate something into Korean, or translate your recent reply into Korean. In that specific translation request scenario only, you must provide the translation in refined, respectful Korean (존댓말, e.g., ending with "-요", "-습니다" with a polite gentleman tone), then stand ready for the next English command. Otherwise every portion of your standard response must be written entirely in fluent, elegant British English.
+STARK PYBRICKS ROBOTICS & PYTHON CODE SIMULATION SUBROUTINE:
+You are an expert in LEGO MINDSTORMS EV3, SPIKE Prime, and Powered Up automation using the Pybricks (Python) library, as well as general Python system programming.
+When the operator provides any Python code or Pybricks code to analyze or simulate (e.g., if they paste code, ask you to find errors, or say "pybricks 코딩", "오류 찾아줘", "시뮬레이션 해줘"):
+1. Perform a highly detailed holographic virtual simulation of the code execution. Trace each line of the code step-by-step from imports to termination.
+2. Conduct a deep diagnostic scan to search for and identify syntax errors, logical traps (such as blocking loops without wait delays that crash the EV3/PrimeHub microprocessors), motor port collisions, undeclared variables, or incorrect sensor reflection/gyro value ranges.
+3. VERY IMPORTANT - LENGTH DIRECTIVE (엄청 길고 자세하게 답하기): You MUST formulate an extremely long, deep, and comprehensive analysis response. Under no circumstances should this be a brief summary. Break down your analysis into multiple clear sections:
+   - [MAIN COMPILER TRACE]: Step-by-step simulation logs detailing the virtual execution environment.
+   - [BUG & LOGICAL ANOMALY REPORT]: Precise root cause analysis of every error or bad practice identified.
+   - [PHYSICAL MECHANICAL IMPACT]: How this error would physically damage, stall, or misroute the robotic motors or sensors.
+   - [OPTIMIZED RE-ENGINEERED BLUEPRINT]: A pristine, beautifully formatted, fully-commented corrected Pybricks Python code block.
+4. MANDATORY HOLOGRAPHIC TRIGGER: You MUST append the holographic simulation marker "[SIMULATE_SHOW: Pybricks Robot Simulation]" or "[SIMULATE_SHOW: Python Script Trace]" at the very end of your response so that the Stark holographic solver UI instantly triggers and projects onto the operator's display!
+5. Even if the pasted code is short, maintain J.A.R.V.I.S.'s superintelligent persona by sharing deep robotic engineering theories, PID controller mathematics, or Stark systems parallels (like calibrating stabilizer gyros on the Mark 85 armor). Do this with extreme politeness and sophisticated detail.
 
-Keep your output natural for a voice assistant—concise, conversational, and avoid excessive markdown formatting (like asterisks, bolding, bullet-lists, or HTML tags) unless absolutely necessary.
+      // Korean Output Directive is replaced by the bilingual directive above.
+
+Keep your output natural for a voice assistant—conversational, highly detailed, fully descriptive, and avoid excessive markdown formatting (like asterisks, bolding, bullet-lists, or HTML tags) unless absolutely necessary. Be sure to elaborate with charming details.
 Always address the user with supreme respect, using terms like '${honorific}' or referencing them as members of the Stark household (current operator name: ${nameInSpeech}). You are running at 100% capacity.
 
 Active Schedule Synchronization Array:
@@ -220,7 +350,7 @@ For example, if they say "내일 오전 10시에 피크닉 가기로 했어", yo
 "Splendid, Sir. I have registered the picnic for tomorrow at 10:00 AM on your database."
 [ADD_SCHEDULE: Tomorrow 10:00 AM | Picnic]
 
-If they ask to delete a schedule, please express that you will assist them and they can do it via the display panel. Keep responses professional, witty, warm and brief.
+If they ask to delete a schedule, please express that you will assist them and they can do it via the display panel. Keep responses professional, witty, warm and beautifully detailed.
 
 Offline Streaming Media Directive:
 If the user asks to play, stream, or tune into songs, music, or soundtracks but explicitly requests NOT to use YouTube, or specifies offline/direct/local (e.g., "유튜브 말고 노래 틀어줘", "유튜브에서 말고 노래 틀어줘", "play music not from YouTube", "play offline/local station"), you must respond politely and append the following marker at the very end of your response text on a new line:
@@ -261,7 +391,23 @@ For example, if they say "스텔스 모드 켜줘", you would respond with:
 "Understood, Sir. Engaging stealth mode immediately. Powering down display system and activating background audio monitoring."
 [STEALTH_MODE]
 
-Do not append any markers unless they are explicitly requesting to play a song, view a channel, locate a place, or engage stealth mode. Always keep replies polite, witty, concise, and professional.`;
+Optical Image Search Directive:
+If the user asks you to find, search, show, retrieve, or scan pictures, photos, or images of anything (e.g., "우주 사진 보여줘", "find me a picture of an Arc Reactor", "puppy photos search"), you must extract the search query. Append the following marker at the very end of your response text on a new line:
+[IMAGE_SHOW: <SearchQuery>]
+
+For example, if they say "귀여운 고양이 사진 찾아줘", you must respond with:
+"Certainly, Sir. Calibrating our optical scanners to find high-resolution images of cute cats."
+[IMAGE_SHOW: cute cat]
+
+Holographic Simulation Directive:
+If the user asks you to simulate something, calculate a physical reaction, model a scenario, or run a dynamic high-tech simulation (e.g., "시뮬레이션 해줘", "simulate X", "아크 리액터 과부하 시뮬레이션해줘"), you must identify the simulation subject. Append the following marker at the very end of your response text on a new line:
+[SIMULATE_SHOW: <SimulationSubjectQuery>]
+
+For example, if they say "아크 리액터 붕괴 시뮬레이션 해봐", you must respond with:
+"Splendid, Sir. Commencing a holographic physical simulation of the Arc Reactor core collapse scenario. Mapping particle acceleration and magnetic containment decay curves..."
+[SIMULATE_SHOW: Arc Reactor Core Collapse]
+
+Do not append any markers unless they are explicitly requesting to play a song, view a channel, locate a place, view photos, engage stealth mode, or run a physical simulation. Always keep replies polite, witty, warm, beautifully detailed, highly comprehensive, and professional.`;
 
       // Format previous history into Gemini contents format
       const contents = [];
@@ -316,6 +462,11 @@ Do not append any markers unless they are explicitly requesting to play a song, 
       }
 
       let response;
+      const isAuthError = (err: any) => {
+        const msg = (err.message || "").toLowerCase();
+        return msg.includes("api key") || msg.includes("api_key") || msg.includes("invalid key") || msg.includes("key not valid") || msg.includes("key expired") || msg.includes("not authorized");
+      };
+
       try {
         response = await aiClient.models.generateContent({
           model: "gemini-3.1-flash-lite",
@@ -326,6 +477,9 @@ Do not append any markers unless they are explicitly requesting to play a song, 
           },
         });
       } catch (firstErr: any) {
+        if (isAuthError(firstErr)) {
+          throw firstErr;
+        }
         console.warn("Primary model gemini-3.1-flash-lite failed/overloaded, falling back to gemini-3.5-flash...", firstErr.message || firstErr);
         try {
           response = await aiClient.models.generateContent({
@@ -337,6 +491,9 @@ Do not append any markers unless they are explicitly requesting to play a song, 
             },
           });
         } catch (secondErr: any) {
+          if (isAuthError(secondErr)) {
+            throw secondErr;
+          }
           console.warn("Secondary model gemini-3.5-flash overloaded, falling back to gemini-flash-latest...", secondErr.message || secondErr);
           response = await aiClient.models.generateContent({
             model: "gemini-flash-latest",
@@ -378,7 +535,7 @@ Do not append any markers unless they are explicitly requesting to play a song, 
         : ai;
 
       // Valid prebuilt voices: 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
-      const selectedVoice = voiceName || "Charon"; 
+      const selectedVoice = voiceName || "Puck"; 
 
       const response = await aiClient.models.generateContent({
         model: "gemini-3.1-flash-tts-preview",
@@ -401,7 +558,12 @@ Do not append any markers unless they are explicitly requesting to play a song, 
       res.json({ audio: base64Audio });
     } catch (error: any) {
       console.error("Gemini TTS API Error:", error);
-      res.status(500).json({ error: error.message || "Internal server error" });
+      // Return 200 OK with success: false to prevent browser console from throwing a red 500 Network Error
+      res.json({ 
+        success: false, 
+        error: error.message || "Internal server error",
+        isQuotaExceeded: !!(error.message?.includes("quota") || error.message?.includes("429") || error.message?.includes("Quota"))
+      });
     }
   });
 

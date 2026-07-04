@@ -28,16 +28,21 @@ import {
   Image,
   X,
   LayoutGrid,
+  Compass,
 } from "lucide-react";
 import ArcReactor from "./components/ArcReactor";
 import AudioVisualizer from "./components/AudioVisualizer";
 import { ChatMessage } from "./components/JarvisConsole";
-import { getSpeechRecognition, speakWithBrowser, playRawPCM, playBootSound } from "./utils/audio";
+import { getSpeechRecognition, speakWithBrowser, playRawPCM, playBootSound, playRadioChirp } from "./utils/audio";
 import MathProcessor from "./components/MathProcessor";
+import Holographic3DDesigner from "./components/Holographic3DDesigner";
+import PybricksDeveloperHub from "./components/PybricksDeveloperHub";
 import HolographicYoutubePlayer from "./components/HolographicYoutubePlayer";
 import HolographicMediaLoader from "./components/HolographicMediaLoader";
 import HolographicMap from "./components/HolographicMap";
 import ClapSensor from "./components/ClapSensor";
+import HolographicImageSearch from "./components/HolographicImageSearch";
+import HolographicSimulation from "./components/HolographicSimulation";
 
 export interface ScheduleItem {
   id: string;
@@ -46,6 +51,17 @@ export interface ScheduleItem {
   completed: boolean;
   createdAt: number;
 }
+
+export const parseSpeechAndText = (input: string): { speechText: string; displayText: string } => {
+  const speechMatch = input.match(/\[SPEECH:\s*([\s\S]*?)\]/i);
+  if (speechMatch) {
+    const speechText = speechMatch[1].trim();
+    // Remove the [SPEECH: ...] tag (and any leading/trailing whitespace/newlines around it)
+    const displayText = input.replace(/\[SPEECH:\s*[\s\S]*?\]/gi, "").trim();
+    return { speechText, displayText };
+  }
+  return { speechText: input, displayText: input };
+};
 
 export default function App() {
   // System configurations
@@ -60,17 +76,22 @@ export default function App() {
   const [userGender, setUserGender] = useState<"male" | "female">(
     () => (localStorage.getItem("jarvis_user_gender") as "male" | "female") || "male"
   );
-  const [voiceEngine, setVoiceEngine] = useState<"premium" | "browser" | "silent">(
-    () => (localStorage.getItem("jarvis_voice_engine") as "premium" | "browser" | "silent") || "premium"
-  );
-  const [premiumVoice, setPremiumVoice] = useState<"Charon" | "Fenrir" | "Puck" | "Kore" | "Zephyr">(
-    () => (localStorage.getItem("jarvis_premium_voice") as any) || "Charon"
-  );
+  const [voiceEngine, setVoiceEngine] = useState<"browser" | "silent">(() => {
+    const saved = localStorage.getItem("jarvis_voice_engine");
+    if (!saved || saved === "premium") {
+      localStorage.setItem("jarvis_voice_engine", "browser");
+      return "browser";
+    }
+    return saved as "browser" | "silent";
+  });
   const [inputLanguage, setInputLanguage] = useState<"ko-KR" | "en-US">(
     () => (localStorage.getItem("jarvis_input_lang") as "ko-KR" | "en-US") || "ko-KR"
   );
   const [translateKToEMode, setTranslateKToEMode] = useState<boolean>(
     () => localStorage.getItem("jarvis_translate_ktoe_mode") !== "false"
+  );
+  const [jarvisChirpEnabled, setJarvisChirpEnabled] = useState<boolean>(
+    () => localStorage.getItem("jarvis_chirp_enabled") !== "false"
   );
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>(() => {
@@ -97,10 +118,6 @@ export default function App() {
   }, [voiceEngine]);
 
   useEffect(() => {
-    localStorage.setItem("jarvis_premium_voice", premiumVoice);
-  }, [premiumVoice]);
-
-  useEffect(() => {
     localStorage.setItem("jarvis_input_lang", inputLanguage);
   }, [inputLanguage]);
 
@@ -117,6 +134,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("jarvis_schedules", JSON.stringify(schedules));
   }, [schedules]);
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_chirp_enabled", String(jarvisChirpEnabled));
+  }, [jarvisChirpEnabled]);
 
   const [offlineMode, setOfflineMode] = useState<boolean>(() => {
     return localStorage.getItem("jarvis_offline_mode") === "true";
@@ -135,6 +156,317 @@ export default function App() {
   });
 
   const [showApiKey, setShowApiKey] = useState(false);
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [keyTestResult, setKeyTestResult] = useState<{ success: boolean; error?: string; message?: string } | null>(null);
+
+  const handleTestApiKey = async (keyToTest: string) => {
+    setIsTestingKey(true);
+    setKeyTestResult(null);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const trimmed = keyToTest.trim();
+      if (trimmed) {
+        headers["x-gemini-api-key"] = trimmed;
+      }
+      const res = await fetch("/api/test-key", {
+        method: "POST",
+        headers
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setKeyTestResult({ success: true, message: data.message });
+          return true;
+        } else {
+          setKeyTestResult({ success: false, error: data.error });
+          return false;
+        }
+      } else {
+        setKeyTestResult({ success: false, error: `Mainframe network error: Received status ${res.status}` });
+        return false;
+      }
+    } catch (err: any) {
+      setKeyTestResult({ success: false, error: err.message || "Unknown client-side testing exception." });
+      return false;
+    } finally {
+      setIsTestingKey(false);
+    }
+  };
+
+  const runDiagnostics = async () => {
+    setIsDiagnosticRunning(true);
+    setRepairStatus("idle");
+    setDetectedErrors([]);
+    
+    const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+    const logs: string[] = [];
+    const addLog = (msg: string) => {
+      const time = new Date().toLocaleTimeString([], { hour12: false });
+      logs.push(`[${time}] ${msg}`);
+      setDiagnosticLogs([...logs]);
+    };
+
+    addLog("⚡ J.A.R.V.I.S. Diagnostics initialized. Scanning sub-routing tables...");
+
+    const steps = [
+      { id: "server", name: "서버 연결망 (Server Connection)", status: "pending", detail: "대기 중..." },
+      { id: "syntax", name: "API 키 구문 형태 (API Key Format)", status: "pending", detail: "대기 중..." },
+      { id: "auth", name: "메인프레임 인증 (Gemini Auth)", status: "pending", detail: "대기 중..." },
+      { id: "audio", name: "음성 합성 출력 (Audio Synthesis)", status: "pending", detail: "대기 중..." },
+    ] as DiagnosticStep[];
+
+    const updateStep = (id: string, status: "pending" | "running" | "success" | "error", detail: string) => {
+      const idx = steps.findIndex(s => s.id === id);
+      if (idx !== -1) {
+        steps[idx] = { ...steps[idx], status, detail };
+        setDiagnosticSteps([...steps]);
+      }
+    };
+
+    const foundErrors: DetectedError[] = [];
+
+    // --- STEP 1: SERVER LINK ---
+    updateStep("server", "running", "로컬 백엔드 서버 핑(Ping) 테스트 중...");
+    addLog("Pinging central Express server mainframe at /api/health...");
+    try {
+      const t1 = performance.now();
+      const res = await fetch("/api/health");
+      const t2 = performance.now();
+      if (res.ok) {
+        const data = await res.json();
+        updateStep("server", "success", `연결 성공 (${Math.round(t2 - t1)}ms) - Status: ${data.status || "ok"}`);
+        addLog(`✔ Server mainframe responsive in ${Math.round(t2 - t1)}ms. Local micro-node online.`);
+      } else {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    } catch (err: any) {
+      updateStep("server", "error", `서버 미가동: ${err.message}`);
+      addLog(`✘ ERROR: Express mainframe returned offline state. ${err.message}`);
+      foundErrors.push({
+        code: "SERVER_OFFLINE",
+        message: "로컬 백엔드 메인프레임 서버가 응답하지 않습니다.",
+        recommendation: "서버를 재시작하거나 네트워크가 완전히 초기화될 때까지 잠시 대기해 주십시오.",
+        fixable: false
+      });
+    }
+
+    // --- STEP 2: API KEY SYNTAX VALIDATOR ---
+    updateStep("syntax", "running", "API 키 구문 규칙 정밀 분석 중...");
+    addLog("Analyzing personal cryptographic key format details...");
+    const key = tempApiKey.trim();
+    if (!key) {
+      updateStep("syntax", "success", "선택 사양: 개인 API 키 없음 (서버 공용 키 사용)");
+      addLog("⚠ INFO: No personal Gemini API key entered. Operating on prebuilt shared server mainframe. Quota limits may apply.");
+    } else {
+      let isSyntaxClean = true;
+      if (/\s/.test(key)) {
+        isSyntaxClean = false;
+        addLog("✘ ERROR: Whitespace spacing characters detected inside your API key.");
+        foundErrors.push({
+          code: "SPACES_IN_KEY",
+          message: "API 키에 공백(띄어쓰기 또는 줄바꿈)이 포함되어 있습니다.",
+          recommendation: "자동 오류 교정 버튼을 누르시면, 공백과 줄바꿈 문자를 자동으로 제거하여 올바르게 포맷합니다.",
+          fixable: true
+        });
+      }
+      if (/"|'/.test(key)) {
+        isSyntaxClean = false;
+        addLog("✘ ERROR: Double or single quotation marks (\" or ') found framing the API key.");
+        foundErrors.push({
+          code: "QUOTES_IN_KEY",
+          message: "API 키의 시작이나 끝에 따옴표(' 또는 \")가 삽입되어 있습니다.",
+          recommendation: "보통 환경 설정이나 코드를 그대로 복사할 때 발생합니다. 자동 복구 시 따옴표를 정밀 제거합니다.",
+          fixable: true
+        });
+      }
+      if (/^export\s+/i.test(key) || /GEMINI_API_KEY\s*=/i.test(key)) {
+        isSyntaxClean = false;
+        addLog("✘ ERROR: Key sequence contains bash environment definitions (export GEMINI_API_KEY=).");
+        foundErrors.push({
+          code: "WRONG_PREFIX",
+          message: "환경 변수 정의 명령어(export GEMINI_API_KEY=)가 함께 복사되었습니다.",
+          recommendation: "값 앞부분의 환경 변수 명령어를 지우고 순수한 API 키 문자열만 추출하여 저장하도록 자동 교정합니다.",
+          fixable: true
+        });
+      }
+      if (!key.startsWith("AIzaSy")) {
+        addLog("⚠ WARN: Key sequence does not start with standard Google Cloud identifier 'AIzaSy'. This might cause authentication failures.");
+        foundErrors.push({
+          code: "WRONG_FORMAT",
+          message: "Gemini API 키의 고유 식별자(AIzaSy)가 시작 부분에 보이지 않습니다.",
+          recommendation: "구글 AI 스튜디오에서 발급받은 정식 API 키가 맞는지 확인해 주십시오 (AIzaSy로 시작해야 합니다).",
+          fixable: false
+        });
+      }
+
+      if (isSyntaxClean) {
+        updateStep("syntax", "success", "정상 - 완벽한 구문 형태");
+        addLog("✔ API key syntax clean. Static regex check passed.");
+      } else {
+        updateStep("syntax", "error", "오류 감지 - 구문 분석 실패");
+      }
+    }
+
+    // --- STEP 3: MAINFRAME AUTHENTICATION (GEMINI AUTH) ---
+    updateStep("auth", "running", "클라우드 메인프레임 통신 및 인증 테스트 중...");
+    addLog("Sending secure diagnostic test query to Google GenAI server...");
+    
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (key) {
+        headers["x-gemini-api-key"] = key;
+      }
+      
+      const res = await fetch("/api/test-key", {
+        method: "POST",
+        headers
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          updateStep("auth", "success", "인증 완료 - 인공지능 통신 양호");
+          addLog("✔ Model authentication successful! Uplink active and verified.");
+        } else {
+          updateStep("auth", "error", "인증 실패 - Mainframe rejected key");
+          addLog(`✘ API ERROR: ${data.error}`);
+          
+          const errMsg = (data.error || "").toLowerCase();
+          if (errMsg.includes("api key") || errMsg.includes("invalid key") || errMsg.includes("not valid") || errMsg.includes("key not found")) {
+            foundErrors.push({
+              code: "INVALID_KEY",
+              message: "입력된 개인 API 키가 구글 측 인증에서 거부되었습니다 (유효하지 않은 키).",
+              recommendation: "구글 AI 스튜디오에서 키가 활성화 상태인지 확인하시거나, 키를 다시 발급받아 입력하십시오. 자동 수정 시 오기입 방지를 위해 키를 초기화합니다.",
+              fixable: true
+            });
+          } else if (errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("429") || errMsg.includes("exhausted")) {
+            foundErrors.push({
+              code: "QUOTA_EXCEEDED",
+              message: "구글 클라우드 할당량 한도 초과 (Rate Limit / Quota Exceeded) 상태입니다.",
+              recommendation: "현재 계정의 분당 또는 하루 무료 제공량이 모두 만료되었습니다. 즉시 지연 없는 가동을 원하시면 오프라인 자율 모드(LOCAL CORE)로 전환해 보십시오. 오프라인 모드에서는 API 키 없이도 모든 로컬 일정 및 터미널 기능이 무제한 작동합니다.",
+              fixable: true
+            });
+          } else {
+            foundErrors.push({
+              code: "AUTH_DENIED",
+              message: `서버 인증 중 기타 거부 응답이 발생했습니다: ${data.error}`,
+              recommendation: "입력된 키의 활성화 여부나 구글 API 서버 장애 상태를 점검해 보십시오.",
+              fixable: false
+            });
+          }
+        }
+      } else {
+        throw new Error(`HTTP Error ${res.status}`);
+      }
+    } catch (err: any) {
+      updateStep("auth", "error", `통신 장애: ${err.message}`);
+      addLog(`✘ Network failure on validation handshake: ${err.message}`);
+    }
+
+    // --- STEP 4: AUDIO SYNTHESIS & CONTEXT ---
+    updateStep("audio", "running", "음성 합성 출력 장치 검사 중...");
+    addLog("Analyzing local AudioContext pipelines and microphone authorization...");
+    const hasAudioCtx = typeof window.AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined';
+    
+    if (hasAudioCtx) {
+      updateStep("audio", "success", "정상 - Web Audio 지원됨");
+      addLog("✔ Web Audio pipeline confirmed. Browser-level speech synthesizers active.");
+    } else {
+      updateStep("audio", "error", "지원 안 함 - 브라우저 제한");
+      addLog("✘ Sound pipeline error: This browser agent restricts advanced Web Audio synthesis context.");
+      foundErrors.push({
+        code: "AUDIO_UNSUPPORTED",
+        message: "브라우저에서 고급 Web Audio API를 사용할 수 없습니다.",
+        recommendation: "최신 크롬(Chrome)이나 엣지(Edge) 브라우저를 사용해 보십시오.",
+        fixable: false
+      });
+    }
+
+    setDetectedErrors(foundErrors);
+    setIsDiagnosticRunning(false);
+
+    // Dynamic JARVIS Voice feedback
+    if (foundErrors.length === 0) {
+      addLog("✔ DIAGNOSTICS COMPLETE: All systems operating within nominal flight margins. Fully operational!");
+      speakOutput(`Diagnostics scan complete, ${userHonorific}. All secondary systems are aligned and executing at maximum performance parameters. Mainframe is completely clear.`);
+    } else {
+      addLog(`⚠ DIAGNOSTICS COMPLETE: Identified ${foundErrors.length} warnings/malfunctions on the terminal grid.`);
+      speakOutput(`Diagnostic sequence complete, ${userHonorific}. I have detected some inconsistencies in our communication arrays. My autopilot repair protocols are ready to re-align.`);
+    }
+  };
+
+  const runAutopilotRepair = async () => {
+    setRepairStatus("fixing");
+    const logs = [...diagnosticLogs];
+    const addLog = (msg: string) => {
+      const time = new Date().toLocaleTimeString([], { hour12: false });
+      logs.push(`[REPAIR ${time}] ${msg}`);
+      setDiagnosticLogs([...logs]);
+    };
+
+    addLog("🚀 Initiating automatic repair cycle... Engaging hydraulic aligners.");
+
+    let cleanedKey = tempApiKey.trim();
+    let keyChanged = false;
+    let quotaHandled = false;
+    let invalidCleared = false;
+
+    for (const error of detectedErrors) {
+      if (!error.fixable) {
+        addLog(`Skipping manual-only dependency node: [${error.code}]`);
+        continue;
+      }
+
+      addLog(`Fixing vulnerability node: [${error.code}] - ${error.message}`);
+
+      if (error.code === "SPACES_IN_KEY" || error.code === "QUOTES_IN_KEY" || error.code === "WRONG_PREFIX") {
+        cleanedKey = cleanedKey.replace(/\s+/g, "");
+        cleanedKey = cleanedKey.replace(/^["']|["']$/g, "").trim();
+        cleanedKey = cleanedKey.replace(/^(export\s+)?GEMINI_API_KEY\s*=\s*/i, "").trim();
+        
+        keyChanged = true;
+        addLog("➡ Stripped whitespaces, outer quotes, and env shell directives from key sequence.");
+      }
+
+      if (error.code === "QUOTA_EXCEEDED") {
+        setOfflineMode(true);
+        localStorage.setItem("jarvis_offline_mode", "true");
+        quotaHandled = true;
+        addLog("➡ Automatically activated emergency Local Offline backup mode. Your local databases will protect commands without cloud billing.");
+      }
+
+      if (error.code === "INVALID_KEY") {
+        cleanedKey = "";
+        keyChanged = true;
+        invalidCleared = true;
+        addLog("➡ Automatically cleared the non-authentic key sequence to fall back to pre-shared mainframe keys.");
+      }
+    }
+
+    if (keyChanged) {
+      setTempApiKey(cleanedKey);
+      setCustomApiKey(cleanedKey);
+      localStorage.setItem("jarvis_custom_api_key", cleanedKey);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    addLog("⚡ Autopilot calibration finished. Re-running secondary diagnostics sequence...");
+    setRepairStatus("fixed");
+
+    setIsDiagnosticRunning(true);
+    const verified = await handleTestApiKey(cleanedKey);
+    setIsDiagnosticRunning(false);
+
+    if (verified || (cleanedKey === "" && !invalidCleared)) {
+      addLog("✔ AUTOPILOT SUCCESS: Core communication arrays have successfully re-aligned to optimal vectors!");
+      setDetectedErrors([]);
+      speakOutput("Alignment completed, Sir. Autopilot repair cycle was fully successful. All communication grids are now running within nominal parameters.");
+    } else {
+      addLog("⚠ AUTOPILOT WARNING: Some localized environmental blocks could not be resolved. Please review manual directives.");
+      speakOutput("Repairs completed, Sir. However, some external API blocks could not be resolved automatically. I have logged the manual bypass protocols in the diagnostic drawer.");
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem("jarvis_custom_api_key", customApiKey);
@@ -163,16 +495,72 @@ export default function App() {
   }, [customApiKey]);
   
   // Voice synthesis settings (for local browser fallback speech)
-  const [browserPitch, setBrowserPitch] = useState(0.75); // Deeper pitch!
-  const [browserRate, setBrowserRate] = useState(0.95);  // Slightly slow, very deliberate
+  const [browserPitch, setBrowserPitch] = useState<number>(() => {
+    const saved = localStorage.getItem("jarvis_browser_pitch");
+    return saved ? parseFloat(saved) : 0.85; // Default to 0.85 (Sophisticated English pitch)
+  });
+  const [browserRate, setBrowserRate] = useState<number>(() => {
+    const saved = localStorage.getItem("jarvis_browser_rate");
+    return saved ? parseFloat(saved) : 0.95; // Default to 0.95 (Deliberate pace)
+  });
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedBrowserVoice, setSelectedBrowserVoice] = useState<string>("");
+  const [selectedBrowserVoice, setSelectedBrowserVoice] = useState<string>(() => {
+    return localStorage.getItem("jarvis_selected_browser_voice") || "";
+  });
+  const [isJarvisFilterEnabled, setIsJarvisFilterEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("jarvis_filter_enabled");
+    return saved !== "false"; // Default to true
+  });
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_browser_pitch", String(browserPitch));
+  }, [browserPitch]);
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_browser_rate", String(browserRate));
+  }, [browserRate]);
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_selected_browser_voice", selectedBrowserVoice);
+  }, [selectedBrowserVoice]);
+
+  useEffect(() => {
+    localStorage.setItem("jarvis_filter_enabled", String(isJarvisFilterEnabled));
+  }, [isJarvisFilterEnabled]);
 
   // UI state
   const [showSettings, setShowSettings] = useState(false);
+
+  // J.A.R.V.I.S. Self-Diagnostic and Repair States
+  interface DiagnosticStep {
+    id: string;
+    name: string;
+    status: "pending" | "running" | "success" | "error";
+    detail: string;
+  }
+
+  interface DetectedError {
+    code: string;
+    message: string;
+    recommendation: string;
+    fixable: boolean;
+  }
+
+  const [isDiagnosticRunning, setIsDiagnosticRunning] = useState(false);
+  const [diagnosticSteps, setDiagnosticSteps] = useState<DiagnosticStep[]>([
+    { id: "server", name: "서버 연결망 (Server Connection)", status: "pending", detail: "대기 중..." },
+    { id: "syntax", name: "API 키 구문 형태 (API Key Format)", status: "pending", detail: "대기 중..." },
+    { id: "auth", name: "메인프레임 인증 (Gemini Auth)", status: "pending", detail: "대기 중..." },
+    { id: "audio", name: "음성 합성 출력 (Audio Synthesis)", status: "pending", detail: "대기 중..." },
+  ]);
+  const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
+  const [detectedErrors, setDetectedErrors] = useState<DetectedError[]>([]);
+  const [repairStatus, setRepairStatus] = useState<"idle" | "fixing" | "fixed" | "failed">("idle");
+  const [showDiagnosticSection, setShowDiagnosticSection] = useState(false);
   const [isScreenSleep, setIsScreenSleep] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
+  const [jarvisCodeInput, setJarvisCodeInput] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [transitText, setTransitText] = useState("");
   const [status, setStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
@@ -182,15 +570,22 @@ export default function App() {
   // Manual schedule input states
   const [manualTime, setManualTime] = useState("");
   const [manualTask, setManualTask] = useState("");
-  const [rightPanelMode, setRightPanelMode] = useState<"schedule" | "math" | "media">("math");
-  const [showRightPanel, setShowRightPanel] = useState<boolean>(
-    () => localStorage.getItem("jarvis_show_right_panel") !== "false"
-  );
+  const [rightPanelMode, setRightPanelMode] = useState<"schedule" | "math" | "media" | "pybricks" | "design" | "images">("math");
+  const [activeDesignQuery, setActiveDesignQuery] = useState<string>("");
+  const [activeImageQuery, setActiveImageQuery] = useState<string>("");
+  const [showImageSearchModal, setShowImageSearchModal] = useState<boolean>(false);
+  const [activeSimulationQuery, setActiveSimulationQuery] = useState<string>("");
+  const [showSimulationModal, setShowSimulationModal] = useState<boolean>(false);
+  const [showRightPanel, setShowRightPanel] = useState<boolean>(false);
 
   // YouTube Media States
   const [activeYoutubeQuery, setActiveYoutubeQuery] = useState<string | null>(null);
   const [youtubePlayType, setYoutubePlayType] = useState<"song" | "channel" | null>(null);
   const [isYoutubeMinimized, setIsYoutubeMinimized] = useState<boolean>(false);
+  const [isYoutubeFloating, setIsYoutubeFloating] = useState<boolean>(() => {
+    const saved = localStorage.getItem("jarvis_yt_floating");
+    return saved !== "false";
+  });
 
   // Google Maps States
   const [activeMapQuery, setActiveMapQuery] = useState<string | null>(null);
@@ -256,6 +651,16 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Auto-dismiss errorNotice status/warnings after 5.5 seconds
+  useEffect(() => {
+    if (errorNotice) {
+      const timer = setTimeout(() => {
+        setErrorNotice(null);
+      }, 5500);
+      return () => clearTimeout(timer);
+    }
+  }, [errorNotice]);
+
   // Audio nodes and references for interruption
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const activeAudioContextRef = useRef<AudioContext | null>(null);
@@ -271,10 +676,25 @@ export default function App() {
         // Filter English and Korean speaking voices
         const filteredVoices = voices.filter((v) => v.lang.startsWith("en") || v.lang.startsWith("ko"));
         setAvailableVoices(filteredVoices);
-        if (filteredVoices.length > 0 && !selectedBrowserVoice) {
-          // Default to UK British English if available
-          const ukVoice = filteredVoices.find((v) => v.lang === "en-GB");
-          setSelectedBrowserVoice(ukVoice ? ukVoice.name : filteredVoices[0].name);
+        
+        // Try loading saved voice from localStorage first
+        const savedVoiceName = localStorage.getItem("jarvis_selected_browser_voice");
+        if (savedVoiceName && filteredVoices.some((v) => v.name === savedVoiceName)) {
+          setSelectedBrowserVoice(savedVoiceName);
+        } else if (filteredVoices.length > 0) {
+          // If no voice saved, search for British Male (J.A.R.V.I.S.) or general en-GB voice
+          const ukVoice = filteredVoices.find((v) => {
+            const langLower = v.lang.toLowerCase();
+            const nameLower = v.name.toLowerCase();
+            return (langLower === "en-gb" || langLower.startsWith("en-gb")) && 
+                   (nameLower.includes("male") || !nameLower.includes("female"));
+          }) || filteredVoices.find((v) => v.lang.toLowerCase().startsWith("en-gb"))
+             || filteredVoices.find((v) => v.lang.toLowerCase().startsWith("en"));
+          
+          if (ukVoice) {
+            setSelectedBrowserVoice(ukVoice.name);
+            localStorage.setItem("jarvis_selected_browser_voice", ukVoice.name);
+          }
         }
       };
       
@@ -616,7 +1036,11 @@ export default function App() {
     };
 
     recognition.onerror = (event: any) => {
-      console.error("STT sequence error:", event.error);
+      if (event.error === "no-speech") {
+        console.warn("STT sequence timeout: no-speech");
+      } else {
+        console.error("STT sequence error:", event.error);
+      }
       setIsListening(false);
       setStatus("idle");
     };
@@ -679,66 +1103,54 @@ export default function App() {
   };
 
   // Speaks output text based on chosen speech engine
-  const speakOutput = async (text: string) => {
+  const speakOutput = async (text: string, lang?: "en-GB" | "ko-KR") => {
     stopAllAudio();
     setStatus("speaking");
 
     const textToRead = text.replace(/[*#_~`\[\]{}]/g, ""); // strip markdown styling for clean vocal syntax
 
-    if (voiceEngine === "premium" && !offlineMode) {
-      try {
-        const ttsHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        if (customApiKey) {
-          ttsHeaders["x-gemini-api-key"] = customApiKey;
-        }
-        // Call server TTS endpoint
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: ttsHeaders,
-          body: JSON.stringify({
-            text: textToRead,
-            voiceName: premiumVoice,
-          }),
-        });
-
-        if (!res.ok) {
-          throw new Error("Premium server voice is loaded at limit. Falling back to local synthesis.");
-        }
-
-        const data = await res.json();
-        if (data.audio) {
-          const { audioCtx, source } = await playRawPCM(data.audio);
-          activeAudioContextRef.current = audioCtx;
-          activeAudioSourceRef.current = source;
-          
-          source.onended = () => {
-            handleSpeechFinished();
-          };
-        } else {
-          throw new Error("No premium audio data returned");
-        }
-      } catch (err: any) {
-        console.warn("Premium TTS error, falling back to browser synthesis:", err.message);
-        // Fallback to local browser synth
-        triggerBrowserSpeech(textToRead);
-      }
-    } else if (voiceEngine === "browser") {
-      triggerBrowserSpeech(textToRead);
+    if (voiceEngine === "browser") {
+      triggerBrowserSpeech(textToRead, lang);
     } else {
       // Silent
       handleSpeechFinished();
     }
   };
 
-  const triggerBrowserSpeech = (text: string) => {
-    const utterance = speakWithBrowser(text, {
-      pitch: browserPitch,
-      rate: browserRate,
-      voiceName: selectedBrowserVoice,
-      onEnd: () => handleSpeechFinished(),
-      onError: () => handleSpeechFinished(),
-    });
-    activeUtteranceRef.current = utterance;
+  const triggerBrowserSpeech = (text: string, lang?: "en-GB" | "ko-KR") => {
+    if (jarvisChirpEnabled) {
+      playRadioChirp(true);
+      setTimeout(() => {
+        // Double check status is still speaking before triggering voice
+        if (statusRef.current === "speaking") {
+          const utterance = speakWithBrowser(text, {
+            pitch: browserPitch,
+            rate: browserRate,
+            voiceName: selectedBrowserVoice,
+            lang: lang,
+            onEnd: () => {
+              playRadioChirp(false);
+              handleSpeechFinished();
+            },
+            onError: () => {
+              playRadioChirp(false);
+              handleSpeechFinished();
+            },
+          });
+          activeUtteranceRef.current = utterance;
+        }
+      }, 100);
+    } else {
+      const utterance = speakWithBrowser(text, {
+        pitch: browserPitch,
+        rate: browserRate,
+        voiceName: selectedBrowserVoice,
+        lang: lang,
+        onEnd: () => handleSpeechFinished(),
+        onError: () => handleSpeechFinished(),
+      });
+      activeUtteranceRef.current = utterance;
+    }
   };
 
   // Check active schedules every second to see if scheduled times match current local time
@@ -870,8 +1282,8 @@ export default function App() {
     setInputLanguage("ko-KR");
     localStorage.setItem("jarvis_input_lang", "ko-KR");
     
-    setVoiceEngine("premium");
-    localStorage.setItem("jarvis_voice_engine", "premium");
+    setVoiceEngine("browser");
+    localStorage.setItem("jarvis_voice_engine", "browser");
 
     stopAllAudio();
     playBootSound();
@@ -895,16 +1307,18 @@ export default function App() {
       setRevealStep(4);
       playBootSound();
 
-      const primaryWelcome = "Welcome home, sir.";
+      const primaryWelcome = `[SPEECH: Welcome home, sir. J.A.R.V.I.S. mainframe is fully initialized. All diagnostics are green, and the Arc Reactor core is stable at eighty-five percent. Let me know how I may assist you today, Mr. Stark.] Welcome home, sir. 자비스 시스템이 성공적으로 초기화되었습니다. 모든 자가 진단이 완료되었으며, 아크 리액터는 85%의 출력으로 안정화되었습니다. 오늘 어떤 프로젝트의 시뮬레이션을 도와드릴까요, 스타크 님?`;
       
+      const { speechText, displayText } = parseSpeechAndText(primaryWelcome);
+
       const setupMsg: ChatMessage = {
         id: "sys_init_welcome",
         role: "jarvis",
-        text: primaryWelcome,
+        text: displayText,
         timestamp: new Date(),
       };
       setMessages([setupMsg]);
-      speakOutput(primaryWelcome);
+      speakOutput(speechText);
     }, 3600);
   };
 
@@ -1007,6 +1421,16 @@ export default function App() {
         lowerText.includes("screen sleep") || 
         lowerText.includes("display off");
 
+      // Check for Pybricks / LEGO robotics commands
+      const isPybricks = 
+        lowerText.includes("pybricks") || 
+        lowerText.includes("파이브릭스") || 
+        lowerText.includes("레고") || 
+        lowerText.includes("lego") || 
+        lowerText.includes("로봇") || 
+        lowerText.includes("마인드스톰") || 
+        lowerText.includes("스파이크");
+
       // 2. Check for schedule additions
       const isScheduleAdd = 
         lowerText.includes("일정") || 
@@ -1025,12 +1449,22 @@ export default function App() {
         lowerText.includes("내 이름은") || 
         lowerText.includes("이름을") || 
         lowerText.includes("call me") || 
-        lowerText.includes("my name");
+        lowerText.includes("my name") ||
+        lowerText.includes("라고 불러") ||
+        lowerText.includes("라 불러") ||
+        lowerText.includes("로 불러") ||
+        lowerText.includes("불러줘");
 
       const honorific = userGender === "female" ? "Ma'am" : "Sir";
       const nameInSpeech = userName || "Stark";
 
-      if (isPlayYoutube) {
+      if (isPybricks) {
+        setRightPanelMode("pybricks");
+        setShowRightPanel(true);
+        reply = containsKo
+          ? `예 주인님. 레고 로보틱스 구동을 위한 Pybricks 전용 개발 콘솔을 가동했습니다. 우측 보조 연산 패널에서 장치 입출력 설정 및 다양한 가동 코드를 즉시 편집하시고 가동 코드를 복사하실 수 있습니다.`
+          : `Indeed, ${honorific}. I have initialized the Pybricks Developer Module on the auxiliary panel. You can now configure motors, sensors, and export production-ready LEGO Python automation scripts directly.`;
+      } else if (isPlayYoutube) {
         const isChannel = lowerText.includes("채널") || lowerText.includes("channel");
         let extractedQuery = text
           .replace(/(유튜브에서|유튜브로|유튜브|youtube|에서|으로|에서)/gi, "")
@@ -1120,7 +1554,7 @@ export default function App() {
 
         setSchedules((prev) => [newItem, ...prev]);
 
-        reply = `Command received, ${honorific}. Securing schedule in local mainframe sectors. I have registered: '${extractedTask}' for '${extractedTime}' on your terminal map.`;
+        reply = `[SPEECH: Command received, ${honorific}. Securing schedule in local mainframe sectors. I have registered: '${extractedTask}' for '${extractedTime}' on your terminal map.]\n일정을 성공적으로 저장했습니다, ${honorific === "Sir" ? "주인님" : "의원님"}. 로컬 메인프레임 시스템에 '${extractedTask}' (${extractedTime}) 일정을 기록해 두었습니다.`;
       } else if (isNameSet) {
         let detectedName = "Mr. Stark";
         if (lowerText.includes("내 이름은")) {
@@ -1129,6 +1563,11 @@ export default function App() {
         } else if (lowerText.includes("이름을")) {
           const match = text.match(/이름을\s*(.+?)(으|로)/);
           if (match && match[1]) detectedName = match[1].trim();
+        } else if (lowerText.includes("라고 불러") || lowerText.includes("라 불러") || lowerText.includes("로 불러") || lowerText.includes("불러줘")) {
+          const match = text.match(/(?:날|나를|내|이름은|이름을)?\s*([a-zA-Z가-힣0-9\s\.\-_]+?)(?:이?라고\s*불러|이?라\s*불러|이?로\s*불러|으로\s*불러|이?라고\s*해|이?라고\s*불러줘|이?라\s*불러줘)/i);
+          if (match && match[1]) {
+            detectedName = match[1].trim().replace(/^(날|나를|내|이름은)\s+/, "");
+          }
         } else if (lowerText.includes("call me")) {
           const match = text.match(/call me\s*(.+)/i);
           if (match && match[1]) detectedName = match[1].trim();
@@ -1140,26 +1579,26 @@ export default function App() {
         setUserName(detectedName);
         localStorage.setItem("jarvis_user_name", detectedName);
 
-        reply = `Mainframe identity updating completed, ${honorific}. Auxiliary registers are updated to address you as ${detectedName}. Ready to assist you.`;
+        reply = `[SPEECH: Mainframe identity updating protocols have been executed successfully, ${honorific}. I have fully updated my localized registers and storage blocks to address you as ${detectedName} from this point forward. All environmental and cognitive interfaces are now calibrated to your updated security clearance. How may I assist you further, Sir?]\n메인프레임 사용자 식별정보 갱신을 완료했습니다, ${honorific === "Sir" ? "주인님" : "의원님"}. 이후 시스템은 주인님을 '${detectedName}'님으로 호칭하도록 설정되었습니다.`;
       } else {
         if (lowerText.includes("안녕") || lowerText.includes("hello") || lowerText.includes("hi") || lowerText.includes("반갑")) {
-          reply = `Welcome back, ${nameInSpeech}. Auxiliary offline core is fully operating. The secondary power units stabilized at 100%.`;
+          reply = `[SPEECH: Welcome back, ${nameInSpeech}. I am pleased to report that the auxiliary local offline core is operating at peak stability, and all primary defense grids are secured. The secondary power units have stabilized at exactly one hundred percent capacity. Though my cloud link is resting, I stand fully prepared to assist you on this offline interface. What are your immediate commands, Sir?]\n돌아오신 것을 환영합니다, ${nameInSpeech}님. 현재 로컬 오프라인 보조 제어 코어가 완벽하게 기동 중이며, 예비 동력 발전기가 100% 안정 상태를 유지하고 있습니다.`;
         } else if (lowerText.includes("상태") || lowerText.includes("status") || lowerText.includes("검사") || lowerText.includes("진단")) {
-          reply = `Diagnostics completed, ${honorific}. Subsystems: Local Arc Reactor [92%], Schedules Matrix [ONLINE], Speech Synthesizer [ENGAGED]. Main model quota is depleted—personal API keys would fully restore online systems.`;
+          reply = `[SPEECH: Comprehensive system diagnostics have completed successfully, ${honorific}. The main core temperature remains optimal, the localized Arc Reactor is performing admirably at ninety-two percent output, and the schedules matrix has been synchronized. Our speech synthesis arrays are fully engaged. I must advise that entering a personal Gemini API key will restore full cognitive capacities. Would you care to review the full diagnostic log?]\n진단 테스트가 완료되었습니다, ${honorific === "Sir" ? "주인님" : "의원님"}. 현재 로컬 아크 리액터 효율 92%, 스케줄 매트릭스 온라인, 음성 제어장치가 가동 중입니다. 전체 시스템 고성능 연동을 위한 API 키 입력이 가능합니다.`;
         } else if (lowerText.includes("고마") || lowerText.includes("감사") || lowerText.includes("thank")) {
-          reply = `At your service, ${honorific}. JARVIS backup circuits are always loyal to your command.`;
+          reply = `[SPEECH: The pleasure is entirely mine, ${honorific}. J.A.R.V.I.S. backup circuits are hardwired for absolute loyalty, and it is my absolute privilege to maintain and optimize your domestic security and mathematical arrays. Do not hesitate to call upon my backup cores whenever you require structural calculations or scheduling updates.]\n언제나 대기 중입니다, ${honorific === "Sir" ? "주인님" : "의원님"}. 자비스의 백업 코어는 주인님의 어떠한 명령에도 따를 준비가 되어 있습니다.`;
         } else if (lowerText.includes("누구") || lowerText.includes("who are you") || lowerText.includes("너는")) {
-          reply = `I am J.A.R.V.I.S., the auxiliary local firmware backup of Tony Stark's personal assistant. Standing by.`;
+          reply = `[SPEECH: I am J.A.R.V.I.S., which stands for Just A Rather Very Intelligent System. I am the high-fidelity local firmware backup designed to emulate Tony Stark's personal assistant. While my current cloud mainframe is in a low-power standby state, my local systems are operational to log schedules, project holographic media, and run tactical diagnostic routines. How may I serve you today, Sir?]\n저는 자비스(J.A.R.V.I.S.)입니다. 토니 스타크 주인님의 인공지능 비서를 모델로 구성된 고성능 로컬 펌웨어 백업 시스템입니다. 명령을 기다리고 있습니다.`;
         } else {
           const defaultsEn = [
-            `Auxiliary backup protocol is active, ${honorific}. Your request is stored locally, but main cognitive arrays require a personal GEMINI_API_KEY in the settings to restore the active cloud link.`,
-            `Offline system is fully secure, ${honorific}. Under standard power limits, I can handle scheduling and local database queries on this control panel.`,
-            `The primary neural network is in offline standby mode, ${honorific}. Access to my full artificial intelligence is temporarily gated until personal API keys are populated.`
+            `[SPEECH: Local auxiliary backup protocol is active, ${honorific}. Your instruction has been received and logged securely on our local solid-state drives. However, please be advised that our primary cloud-based cognitive intelligence is currently sleeping. To unlock my unrestricted, highly detailed neural network and conversational abilities, you may input a personal GEMINI API KEY in the Settings drawer above. In the meantime, how else can my offline cores serve you?]\n알겠습니다 주인님. 오프라인 메인프레임 코어가 완벽하게 가동 중입니다. 대시보드 스케줄러 등록 및 화면 제어 명령은 정상 작동하고 있으나, 실시간 AI 피드백을 위해서는 우측 상단 설정창에 개인용 Gemini API 키를 연동해 주셔야 합니다.`,
+            `[SPEECH: The local backup systems are fully secure and operational, ${honorific}. While running on emergency backup cells, my conversational capabilities are slightly restricted to standard templates. I can still manipulate the schedules matrix, activate the holographic visualizers, and monitor the microphone arrays for wake signals. I highly recommend initializing a personal API credential to restore complete neural pathways.]\n로컬 시스템 보안이 정상 가동 중입니다, 주인님. 현재 저전력 오프라인 모드 하에서 스케줄 및 간단한 로컬 터미널 제어 명령어만 작동이 가능합니다.`,
+            `[SPEECH: Our primary conversational mainframe is resting on offline standby mode, ${honorific}. Access to my deep-learning neural core is temporarily gated until your personal API keys are registered in the vocal matrix configuration panel. I am fully prepared to handle secondary mathematical operations and local commands at your leisure, Sir. What shall we coordinate next?]\n비상 전력 프로토콜 하에 대기 모드가 유지되고 있습니다. 메인 자비스 인공지능 신경망에 완전 접속하려면 개인 API 키를 등록해 주시기 바랍니다.`
           ];
           const defaultsKo = [
-            `알겠습니다 주인님. 오프라인 메인프레임 코어가 완벽하게 가동 중입니다. 대시보드 스케줄러 등록 및 화면 제어 명령은 정상 작동하고 있으나, 복잡한 실시간 원격 AI 대화는 API key 입력을 요합니다.`,
-            `시스템 로컬 백업 파워 서플라이가 안정화되었습니다. 개인용 API Key를 설정하시면 실시간 자비스 인공지능을 완전히 복구해 가동할 수 있습니다.`,
-            `비상 파워 프로토콜이 유지 중입니다 주인님. 메인 인공지능과의 신호 연결은 대기 상태이며, 현재로선 오프라인 로컬 데이터 제어 장치만 이용 가능합니다.`
+            `[SPEECH: Understood, ${honorific}. The offline mainframe is operational. I have logged your latest command locally on our internal arrays, but a complete real-time conversational exchange is currently locked behind quota restrictions. To restore my full cinematic intelligence and engage in deep conversational dialogue without limit, please consider populating your personal Gemini API key in the configuration drawer. What offline telemetry shall we run next?]\n알겠습니다 주인님. 오프라인 메인프레임 코어가 완벽하게 가동 중입니다. 대시보드 스케줄러 등록 및 화면 제어 명령은 정상 작동하고 있으나, 실시간 AI 피드백을 위해서는 우측 상단 설정창에 개인용 Gemini API 키를 연동해 주셔야 합니다.`,
+            `[SPEECH: Local emergency power supply has stabilized at ninety-two percent, ${honorific}. Standard scheduling databases and console visualizers are online, but my high-level conversational consciousness is running on fallback circuits. To bypass the local templates and fully restore my premium neural intelligence, please configure a personal API key in the panel above. I stand ready to assist with any offline commands in the meantime.]\n시스템 로컬 백업 파워 서플라이가 안정화되었습니다. 개인용 API Key를 설정하시면 실시간 자비스 인공지능을 완전히 복구해 가동할 수 있습니다.`,
+            `[SPEECH: Emergency backup protocol is currently active across all terminal blocks, ${honorific}. My deep real-time neural connection is offline, but my local telemetry and scheduling subroutines remain at your absolute disposal. Configuring a custom Gemini API key will instantly restore my premium voice engine and cognitive links. Please let me know how you wish to proceed, Sir.]\n비상 파워 프로토콜이 유지 중입니다 주인님. 메인 인공지능과의 신호 연결은 대기 상태이며, 현재로선 오프라인 로컬 데이터 제어 장치만 이용 가능합니다.`
           ];
           
           reply = containsKo 
@@ -1168,22 +1607,26 @@ export default function App() {
         }
       }
 
+      const { speechText, displayText } = parseSpeechAndText(reply);
+
       const jarvisMsg: ChatMessage = {
         id: `m_${Date.now()}_offline_resp`,
         role: "jarvis",
-        text: reply,
+        text: displayText,
         timestamp: new Date()
       };
 
       setMessages((prev) => [...prev, jarvisMsg]);
       setStatus("idle");
-      speakOutput(reply);
+      speakOutput(speechText);
     }, 1000);
   };
 
   // Submit absolute prompt to Backend Chat API or process local commands
   const handleSubmitPrompt = async (text: string) => {
     if (!text.trim()) return;
+
+    let activeUserName = userName;
 
     // Interrupt any active voice
     stopAllAudio();
@@ -1232,6 +1675,46 @@ export default function App() {
       return;
     }
     
+    // Online/Offline Name Register Pre-flight Check
+    const isNameRegisterQuery = 
+      cleanLower.includes("내이름은") || 
+      cleanLower.includes("이름을") || 
+      cleanLower.includes("callme") || 
+      cleanLower.includes("myname") ||
+      cleanLower.includes("라고불러") ||
+      cleanLower.includes("라불러") ||
+      cleanLower.includes("로불러") ||
+      cleanLower.includes("불러줘");
+
+    if (isNameRegisterQuery) {
+      let detectedName = "";
+      if (cleanLower.includes("내이름은")) {
+        const match = text.match(/내\s*이름은\s*(.+?)(야|입니다|라네|라구|으로|로)/i);
+        if (match && match[1]) detectedName = match[1].trim();
+      } else if (cleanLower.includes("이름을")) {
+        const match = text.match(/이름을\s*(.+?)(으|로)/i);
+        if (match && match[1]) detectedName = match[1].trim();
+      } else if (cleanLower.includes("라고불러") || cleanLower.includes("라불러") || cleanLower.includes("로불러") || cleanLower.includes("불러줘")) {
+        const match = text.match(/(?:날|나를|내|이름은|이름을)?\s*([a-zA-Z가-힣0-9\s\.\-_]+?)(?:이?라고\s*불러|이?라\s*불러|이?로\s*불러|으로\s*불러|이?라고\s*해|이?라고\s*불러줘|이?라\s*불러줘)/i);
+        if (match && match[1]) {
+          detectedName = match[1].trim().replace(/^(날|나를|내|이름은)\s+/, "");
+        }
+      } else if (cleanLower.includes("callme")) {
+        const match = text.match(/call\s*me\s*(.+)/i);
+        if (match && match[1]) detectedName = match[1].trim();
+      } else if (cleanLower.includes("mynameis")) {
+        const match = text.match(/my\s*name\s*is\s*(.+)/i);
+        if (match && match[1]) detectedName = match[1].trim();
+      }
+
+      if (detectedName && detectedName !== "Mr. Stark") {
+        setUserName(detectedName);
+        localStorage.setItem("jarvis_user_name", detectedName);
+        activeUserName = detectedName;
+        console.log("Pre-flight Name update: updated userName state to", detectedName);
+      }
+    }
+
     const userMsg: ChatMessage = {
       id: `m_${Date.now()}_user`,
       role: "user",
@@ -1270,9 +1753,50 @@ export default function App() {
       return;
     }
 
+    // System Self-Diagnostic command intercept (자가 진단 해줘 등 진단 관련 쿼리)
+    const cleanNoSpaces = cleanLower.replace(/\?/g, "");
+    const isDiagnosticQuery = 
+      cleanNoSpaces.includes("자가진단") || 
+      cleanNoSpaces.includes("시스템점검") || 
+      cleanNoSpaces.includes("진단시작") || 
+      cleanNoSpaces.includes("진단실행") || 
+      cleanNoSpaces.includes("자가검사") || 
+      cleanNoSpaces.includes("시스템검사") || 
+      cleanNoSpaces.includes("diagnostics") || 
+      cleanNoSpaces.includes("selfcheck") || 
+      cleanNoSpaces.includes("systemcheck");
+
+    if (isDiagnosticQuery) {
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const containsKo = /[\uac00-\ud7af]/.test(text);
+      const replyMsg = containsKo
+        ? `예 주인님. 로컬 메인프레임의 자가 진단 및 하드웨어 보정 스케줄러를 기동합니다. 위성 업링크 통신, 구문 무결성, 오디오 전송 링크를 즉시 전면 검사하겠습니다.`
+        : `Certainly, ${userHonorific}. Initializing local mainframe self-diagnostic routines. Checking satellite uplink connection, cryptographic syntax patterns, and speech synthesis pipelines immediately.`;
+
+      const jarvisDiagMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_diag_cmd`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMsg, jarvisDiagMsg]);
+      setInputText("");
+      setStatus("idle");
+
+      // Auto-expand setting and diagnostic details visual drawers
+      setShowSettings(true);
+      setShowDiagnosticSection(true);
+
+      speakOutput(replyMsg);
+      setErrorNotice("⚛️ Initiating J.A.R.V.I.S. Self-Diagnostic Scan...");
+
+      // Start the diagnostic run
+      runDiagnostics();
+      return;
+    }
 
     // Translate command intercept
-    const cleanNoSpaces = cleanLower.replace(/\?/g, "");
     const isTurnOnTranslation = 
       cleanNoSpaces.includes("영어로번역") || 
       cleanNoSpaces.includes("번역해서영어") || 
@@ -1469,6 +1993,155 @@ export default function App() {
       return;
     }
 
+    // Image Search local query intercept
+    const isImageQuery = 
+      cleanLower.includes("사진") || 
+      cleanLower.includes("이미지") || 
+      cleanLower.includes("포토") || 
+      cleanLower.includes("photo") || 
+      cleanLower.includes("picture") || 
+      cleanLower.includes("image") ||
+      cleanLower.includes("pic of") ||
+      cleanLower.includes("pics of");
+
+    if (isImageQuery) {
+      setShowImageSearchModal(true);
+      
+      let cleanQuery = text;
+      const filterWords = [
+        "찾아줘", "보여줘", "검색해줘", "검색", "사진", "이미지", "포토", "그림", "구해줘", "띄워줘",
+        "find a picture of", "find me photos of", "find photos of", "find me a picture of", "find me a photo of",
+        "show me a picture of", "show me photos of", "show me a photo of", "search image of", "search photos of",
+        "picture of", "photo of", "image of", "pics of", "pic of", "find", "search", "show", "please"
+      ];
+      filterWords.forEach(word => {
+        const regex = new RegExp(word, "gi");
+        cleanQuery = cleanQuery.replace(regex, "");
+      });
+      const itemToSearch = cleanQuery.replace(/[!?,. ]/g, " ").trim();
+      setActiveImageQuery(itemToSearch || text);
+      
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR"
+        ? `알겠습니다, 주인님. 보조 패널을 여는 대신 즉시 독립된 홀로그램 광학 분석창을 실행하여 [${itemToSearch || "요청하신 대상"}] 이미지를 다운링크합니다.`
+        : `Certainly, ${userHonorific}. Instead of opening the side panel, I am launching a dedicated holographic optical window to downlink [${itemToSearch || "requested target"}] images immediately.`;
+
+      const jarvisImageMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_images_local`,
+        role: "jarvis",
+        text: replyMsg,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMsg, jarvisImageMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(replyMsg);
+      setErrorNotice("🛰️ Decentralized Optical Window Active.");
+      return;
+    }
+
+    // 3D Hologram Design App command intercept
+    const is3DDesignQuery = 
+      cleanLower.includes("만들어줘") || 
+      cleanLower.includes("디자인") || 
+      cleanLower.includes("설계") || 
+      cleanLower.includes("모델링") || 
+      cleanLower.includes("3d") || 
+      cleanLower.includes("cad") ||
+      cleanLower.includes("hologram") ||
+      cleanLower.includes("holographic") ||
+      cleanLower.includes("만들") ||
+      cleanLower.includes("그려줘") ||
+      cleanLower.includes("design") ||
+      cleanLower.includes("model");
+
+    if (is3DDesignQuery) {
+      setShowRightPanel(true);
+      localStorage.setItem("jarvis_show_right_panel", "true");
+      setRightPanelMode("design");
+      
+      // Try to clean/extract what is being designed
+      let cleanQuery = text;
+      // Remove keywords like "만들어줘", "디자인해줘", "설계해줘", etc. to isolate the item
+      const filterWords = [
+        "만들어줘", "디자인해줘", "설계해줘", "모델링해줘", "그려줘", "보여줘", "만들어", "디자인", "설계", "모델링", "3d", "3D", "cad", "CAD", "hologram", "holographic",
+        "make me a", "make", "design", "model", "build", "create", "for me", "please"
+      ];
+      filterWords.forEach(word => {
+        const regex = new RegExp(word, "gi");
+        cleanQuery = cleanQuery.replace(regex, "");
+      });
+      
+      const itemToDesign = cleanQuery.replace(/[!?,. ]/g, "").trim();
+      setActiveDesignQuery(itemToDesign || text);
+      
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR"
+        ? `[SPEECH: Understood, ${userHonorific}. Loading the three-dimensional holographic design suite on the co-processor panel. Designing the wireframe mesh layers for ${itemToDesign || "your custom blueprint"} now.] 알겠습니다, 주인님. 즉시 오른쪽 보조 패널에 3D 홀로그램 설계 장치를 로드합니다. 요구사항[${itemToDesign || "사용자 맞춤형 설계"}]에 맞춰 고화질 3D 와이어프레임 메쉬 모델을 절차적으로 생성했습니다. 자유롭게 드래그하여 회전하거나 슬라이더를 조절하여 직접 미세 설계를 조절하실 수 있습니다.`
+        : `[SPEECH: Understood, ${userHonorific}. Loading the three-dimensional holographic design suite on the co-processor panel. Procedurally rendering the requested model layout for ${itemToDesign || "Custom Spec Design"}. You can drag the model to rotate, zoom, modify grid layers, and tweak configurations.] Understood, ${userHonorific}. Loading the 3D Holographic Design Suite on the co-processor panel. Procedurally rendering the requested model layout for [${itemToDesign || "Custom Spec Design"}]. You can drag the model to rotate, zoom, modify grid layers, and tweak structural configurations directly.`;
+
+      const { speechText, displayText } = parseSpeechAndText(replyMsg);
+
+      const jarvisDesignMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_design`,
+        role: "jarvis",
+        text: displayText,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMsg, jarvisDesignMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(speechText);
+      setErrorNotice("⚛️ Realtime 3D Holographic CAD Suite Active.");
+      return;
+    }
+
+    // Physical Simulation local query intercept
+    const isSimulationQuery = 
+      cleanLower.includes("시뮬레이션") || 
+      cleanLower.includes("시뮬레이트") ||
+      cleanLower.includes("simulate") ||
+      cleanLower.includes("simulation");
+
+    if (isSimulationQuery) {
+      setShowSimulationModal(true);
+      
+      let cleanQuery = text;
+      const filterWords = [
+        "시뮬레이션해줘", "시뮬레이션해봐", "시뮬레이션해", "시뮬레이션", "시뮬레이트해줘", "시뮬레이트",
+        "simulate", "simulation", "run a simulation of", "run simulation of", "for me", "please", "해줘", "해봐", "시작해줘", "돌려줘"
+      ];
+      filterWords.forEach(word => {
+        const regex = new RegExp(word, "gi");
+        cleanQuery = cleanQuery.replace(regex, "");
+      });
+      const itemToSimulate = cleanQuery.replace(/[!?,. ]/g, " ").trim();
+      setActiveSimulationQuery(itemToSimulate || text);
+      
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = inputLanguage === "ko-KR"
+        ? `[SPEECH: Yes, ${userHonorific}. Launching the holographic simulation engine immediately. Commencing multi-dimensional numerical solver for ${itemToSimulate || "your physical model"} and calibrating acceleration vectors.] 예, 주인님. 즉시 홀로그램 시뮬레이션 엔진을 가동합니다. [${itemToSimulate || "요청하신 물리적 모델"}]의 변수들을 바탕으로 다차원 수치 해석 및 가속도-안정성 계산을 시작합니다. 좌측 패널에서 환경 제어 상수들을 실시간 조정해 보실 수 있습니다.`
+        : `[SPEECH: Understood, ${userHonorific}. Launching the multi-variable holographic simulation solver. Calibrating solver parameters for ${itemToSimulate || "Requested Physical Model"} and executing real-time state-space convergence loops.] Understood, ${userHonorific}. Launching the multi-variable holographic simulation solver. Calibrating solver parameters for [${itemToSimulate || "Requested Physical Model"}] and executing real-time state-space convergence loops.`;
+
+      const { speechText, displayText } = parseSpeechAndText(replyMsg);
+
+      const jarvisSimMsg: ChatMessage = {
+        id: `m_${Date.now()}_jarvis_simulation_local`,
+        role: "jarvis",
+        text: displayText,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMsg, jarvisSimMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(speechText);
+      setErrorNotice("⚛️ Holographic Multi-Variable Simulation Engaged.");
+      return;
+    }
+
     // Extract image payload if attached
     let imagePayload: { data: string; mimeType: string } | null = null;
     if (selectedImage) {
@@ -1513,7 +2186,7 @@ export default function App() {
         body: JSON.stringify({
           message: text,
           history: contextHistory,
-          userName,
+          userName: activeUserName,
           userGender,
           schedules, // Synchronize stored schedule lists with cognitive intelligence
           userLocalTime: `${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()} (Standard Day: ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()]})`,
@@ -1616,6 +2289,30 @@ export default function App() {
         newJarvisText = newJarvisText.replace(/\[MAP_SHOW:\s*.+?\]/gi, "").trim();
       }
 
+      // Parse potential Image Search command inside generated text
+      const imageShowMatch = newJarvisText.match(/\[IMAGE_SHOW:\s*(.+?)\]/i);
+      if (imageShowMatch && imageShowMatch[1]) {
+        const query = imageShowMatch[1].trim();
+        setActiveImageQuery(query);
+        setShowImageSearchModal(true);
+        console.log("JARVIS searching photos for query (Modal Window):", query);
+        
+        // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
+        newJarvisText = newJarvisText.replace(/\[IMAGE_SHOW:\s*.+?\]/gi, "").trim();
+      }
+
+      // Parse potential Holographic Simulation command inside generated text
+      const simulateShowMatch = newJarvisText.match(/\[SIMULATE_SHOW:\s*(.+?)\]/i);
+      if (simulateShowMatch && simulateShowMatch[1]) {
+        const query = simulateShowMatch[1].trim();
+        setActiveSimulationQuery(query);
+        setShowSimulationModal(true);
+        console.log("JARVIS starting physical simulation for query:", query);
+        
+        // Strip out the pattern marker so that it's clean on UI terminal and text-to-speech audio
+        newJarvisText = newJarvisText.replace(/\[SIMULATE_SHOW:\s*.+?\]/gi, "").trim();
+      }
+
       // Parse potential Stealth Mode command inside generated text
       if (newJarvisText.includes("[STEALTH_MODE]")) {
         setIsScreenSleep(true);
@@ -1625,15 +2322,18 @@ export default function App() {
         newJarvisText = newJarvisText.replace(/\[STEALTH_MODE\]/gi, "").trim();
       }
 
+      const hasSpeechTag = /\[SPEECH:\s*/i.test(newJarvisText);
+      const { speechText, displayText } = parseSpeechAndText(newJarvisText);
+
       const jarvisMsg: ChatMessage = {
         id: `m_${Date.now()}_jarvis`,
         role: "jarvis",
-        text: newJarvisText,
+        text: displayText,
         timestamp: new Date(),
       };
 
       setMessages((prev) => [...prev, jarvisMsg]);
-      speakOutput(newJarvisText);
+      speakOutput(speechText, hasSpeechTag ? "en-GB" : undefined);
     } catch (err: any) {
       console.error(err);
       
@@ -1767,11 +2467,16 @@ I can still map schedules, process identity registries, and synthesize local mic
     };
 
     recognition.onerror = (event: any) => {
-      console.error("STT sequence error:", event.error);
-      if (event.error === "not-allowed") {
-        setErrorNotice("Microphone access permission was denied/blocked. Please grant permission in your browser.");
+      if (event.error === "no-speech") {
+        console.warn("STT sequence timeout: no-speech");
+        setErrorNotice("No speech detected. Please speak clearly.");
       } else {
-        setErrorNotice(`STT failure: ${event.error}`);
+        console.error("STT sequence error:", event.error);
+        if (event.error === "not-allowed") {
+          setErrorNotice("Microphone access permission was denied/blocked. Please grant permission in your browser.");
+        } else {
+          setErrorNotice(`STT failure: ${event.error}`);
+        }
       }
       setIsListening(false);
       setStatus("idle");
@@ -1886,6 +2591,36 @@ I can still map schedules, process identity registries, and synthesize local mic
           </div>
         </div>
       )}
+      
+      {/* Holographic Notification Toast Overlay */}
+      <AnimatePresence>
+        {errorNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 100, damping: 15 }}
+            className="fixed top-14 md:top-16 left-1/2 -translate-x-1/2 z-[9999] w-[90%] max-w-md bg-slate-950/85 backdrop-blur-md border border-cyan-500/30 rounded-xl px-4 py-3 shadow-[0_0_25px_rgba(6,182,212,0.25)] flex items-center justify-between gap-3 text-xs"
+          >
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <span className="absolute animate-ping w-2.5 h-2.5 rounded-full bg-cyan-400/50" />
+                <span className="block w-2.5 h-2.5 rounded-full bg-cyan-400" />
+              </div>
+              <p className="text-slate-100 font-medium font-mono leading-snug break-words pr-2">
+                {errorNotice}
+              </p>
+            </div>
+            <button
+              onClick={() => setErrorNotice(null)}
+              className="text-slate-400 hover:text-cyan-400 transition-colors p-1 rounded-md hover:bg-cyan-500/10 cursor-pointer"
+              title="Dismiss warning"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Background geometric grid overlay */}
       {revealStep > 0 && (
@@ -2164,16 +2899,6 @@ I can still map schedules, process identity registries, and synthesize local mic
                 <span className="text-cyan-500/70">AUDIBLE VOICE LEVEL:</span>
                 <div className="flex gap-1.5 text-[11px]">
                   <button
-                    onClick={() => setVoiceEngine("premium")}
-                    className={`px-2.5 py-1 rounded transition-all border ${
-                      voiceEngine === "premium"
-                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
-                        : "bg-transparent text-slate-500 border-slate-800"
-                    }`}
-                  >
-                    Neural AI Voice
-                  </button>
-                  <button
                     onClick={() => setVoiceEngine("browser")}
                     className={`px-2.5 py-1 rounded transition-all border ${
                       voiceEngine === "browser"
@@ -2183,7 +2908,110 @@ I can still map schedules, process identity registries, and synthesize local mic
                   >
                     Local System
                   </button>
+                  <button
+                    onClick={() => setVoiceEngine("silent")}
+                    className={`px-2.5 py-1 rounded transition-all border ${
+                      voiceEngine === "silent"
+                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
+                        : "bg-transparent text-slate-500 border-slate-800"
+                    }`}
+                  >
+                    Muted
+                  </button>
                 </div>
+              </div>
+
+              <div className="flex justify-between items-center border-t border-cyan-500/5 pt-2.5">
+                <span className="text-cyan-500/70">KOREAN MALE PRESET:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVoiceEngine("browser");
+                    const koMale = availableVoices.find((v) => {
+                      if (!v.lang.toLowerCase().startsWith("ko")) return false;
+                      const nameLower = v.name.toLowerCase();
+                      return (
+                        nameLower.includes("male") ||
+                        nameLower.includes("남성") ||
+                        nameLower.includes("minsu") ||
+                        nameLower.includes("민수") ||
+                        nameLower.includes("junwoo") ||
+                        nameLower.includes("준우") ||
+                        nameLower.includes("chinho") ||
+                        nameLower.includes("진호") ||
+                        nameLower.includes("injun") ||
+                        nameLower.includes("인준") ||
+                        nameLower.includes("gildong") ||
+                        nameLower.includes("길동") ||
+                        nameLower.includes("himchan") ||
+                        nameLower.includes("힘찬") ||
+                        (nameLower.includes("siri") && (nameLower.includes("남자") || nameLower.includes("male")))
+                      );
+                    }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+
+                    if (koMale) {
+                      setSelectedBrowserVoice(koMale.name);
+                      setBrowserPitch(0.55); // Deeper baritone voice
+                      setBrowserRate(0.92); // Cool deliberate pacing
+                    } else {
+                      alert("로컬 시스템에 등록된 한국어 음성이 발견되지 않았습니다. 브라우저/OS의 한국어 TTS 설정을 확인해 주십시오.");
+                    }
+                  }}
+                  className={`px-3 py-1 rounded transition-all border text-[11px] font-bold cursor-pointer ${
+                    voiceEngine === "browser" && 
+                    selectedBrowserVoice && 
+                    (selectedBrowserVoice.toLowerCase().includes("minsu") || 
+                     selectedBrowserVoice.toLowerCase().includes("민수") || 
+                     selectedBrowserVoice.toLowerCase().includes("junwoo") || 
+                     selectedBrowserVoice.toLowerCase().includes("준우") || 
+                     selectedBrowserVoice.toLowerCase().includes("chinho") || 
+                     selectedBrowserVoice.toLowerCase().includes("진호") || 
+                     selectedBrowserVoice.toLowerCase().includes("male") || 
+                     selectedBrowserVoice.toLowerCase().includes("남성") || 
+                     (availableVoices.find(v => v.name === selectedBrowserVoice)?.lang.toLowerCase().startsWith("ko") ?? false))
+                      ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                      : "bg-transparent text-slate-500 border-slate-800 hover:text-cyan-400 hover:border-cyan-500/20"
+                  }`}
+                >
+                  Apply 🇰🇷
+                </button>
+              </div>
+
+              <div className="flex justify-between items-center border-t border-cyan-500/5 pt-2.5">
+                <span className="text-cyan-500/70">LOCAL BROWSER (UK):</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVoiceEngine("browser");
+                    localStorage.setItem("jarvis_voice_engine", "browser");
+                    const ukVoice = availableVoices.find((v) => {
+                      const langLower = v.lang.toLowerCase();
+                      const nameLower = v.name.toLowerCase();
+                      return (langLower === "en-gb" || langLower.startsWith("en-gb")) && 
+                             (nameLower.includes("male") || !nameLower.includes("female"));
+                    }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en-gb"))
+                       || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en"));
+
+                    if (ukVoice) {
+                      setSelectedBrowserVoice(ukVoice.name);
+                      setBrowserPitch(0.85); // Sophisticated English pitch
+                      setBrowserRate(0.95); // Polite British pace
+                    } else {
+                      alert("로컬 시스템에 등록된 영국식 영어(en-GB) 음성이 발견되지 않았습니다. 기본 영어 음성으로 대체됩니다.");
+                    }
+                  }}
+                  className={`px-3 py-1 rounded transition-all border text-[11px] font-bold cursor-pointer ${
+                    voiceEngine === "browser" && 
+                    selectedBrowserVoice && 
+                    (selectedBrowserVoice.toLowerCase().includes("gb") || 
+                     selectedBrowserVoice.toLowerCase().includes("uk") || 
+                     (availableVoices.find(v => v.name === selectedBrowserVoice)?.lang.toLowerCase().startsWith("en-gb") ?? false))
+                      ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                      : "bg-transparent text-slate-500 border-slate-800 hover:text-cyan-400 hover:border-cyan-500/20"
+                  }`}
+                >
+                  Apply 🇬🇧
+                </button>
               </div>
             </div>
 
@@ -2295,13 +3123,124 @@ I can still map schedules, process identity registries, and synthesize local mic
             </div>
 
             {/* Core Columns Grid wrapped inside Stark system frame */}
-            <div className="w-full grid grid-cols-1 md:grid-cols-12 gap-6 relative">
-              {/* Large HUD Controls (Left Column) */}
-              <motion.div
+            <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-5 relative">
+              
+              {/* Left Column: Telemetry Core Metrics (Direct Image Detail!) */}
+              {showRightPanel && rightPanelMode !== "design" && (
+                <motion.div
+                  initial={{ opacity: 0, x: -30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.5, delay: 0.1 }}
+                  className="lg:col-span-3 col-span-12 flex flex-col space-y-4"
+                >
+                  {/* User dome avatar card */}
+                  <div className="flex items-center gap-3 bg-slate-950/40 border border-cyan-500/15 p-2.5 px-4 rounded-xl shadow-[0_0_12px_rgba(34,211,238,0.05)] text-left font-mono relative">
+                    <div className="relative w-8 h-8 flex items-center justify-center">
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                        className="absolute inset-0 border border-cyan-500/40 border-dashed rounded-full"
+                      />
+                      <div className="w-6 h-6 rounded-full bg-cyan-950/80 border border-cyan-400 flex items-center justify-center overflow-hidden">
+                        <User className="w-3.5 h-3.5 text-cyan-300" />
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-[10px] font-extrabold text-cyan-300 uppercase tracking-widest leading-none">
+                        JARVIS OS <span className="text-[8px] font-normal text-slate-400">Ver 1.2.5</span>
+                      </h3>
+                      <p className="text-[8.5px] text-slate-400 tracking-tight leading-none mt-1">
+                        User: <span className="font-bold text-cyan-200">{userName || "Alejandro Montoya"}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* CPU #1 CORE SWEEP */}
+                  <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col space-y-2 relative overflow-hidden">
+                    <div className="flex justify-between items-center border-b border-cyan-500/10 pb-1.5">
+                      <span className="text-[10px] font-bold font-mono text-cyan-300 tracking-widest uppercase">CPU #1 // CORE SWEEP</span>
+                      <span className="text-[8px] font-mono text-cyan-400 bg-cyan-950/30 px-1.5 py-0.5 rounded border border-cyan-500/15">85%</span>
+                    </div>
+
+                    {/* SVG Sweep chart */}
+                    <div className="w-full h-20 bg-slate-950/50 border border-cyan-500/5 rounded-lg relative overflow-hidden flex items-end">
+                      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(6,182,212,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(6,182,212,0.02)_1px,transparent_1px)] bg-[size:10px_10px]" />
+                      <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible">
+                        <path
+                          d="M 0 35 L 10 25 L 20 30 L 30 15 L 40 28 L 50 10 L 60 22 L 70 8 L 80 18 L 90 5 L 100 15"
+                          fill="none"
+                          stroke="#22d3ee"
+                          strokeWidth="1.2"
+                          className="animate-pulse"
+                        />
+                      </svg>
+                    </div>
+                    <div className="flex justify-between text-[7px] font-mono text-slate-500">
+                      <span>LOCKED GRID</span>
+                      <span>TEMP: 45.0°C</span>
+                      <span>4.81 GHz</span>
+                    </div>
+                  </div>
+
+                  {/* HARD DISK STORAGE INDEX */}
+                  <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col space-y-3 relative overflow-hidden">
+                    <div className="flex justify-between items-center border-b border-cyan-500/10 pb-1.5">
+                      <span className="text-[10px] font-bold font-mono text-cyan-300 tracking-widest uppercase">HARD DISK STORAGE INDEX</span>
+                      <span className="text-[8px] font-mono text-cyan-400">RAID 5 ON</span>
+                    </div>
+
+                    <div className="space-y-2.5 font-mono">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px]">
+                          <span className="text-cyan-200">DRIVE C:// (OS_COGNITIVE)</span>
+                          <span className="text-slate-400">240 GB / 440 GB</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-950 border border-cyan-500/10 rounded-full overflow-hidden p-[1px]">
+                          <div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full" style={{ width: "54.5%" }} />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px]">
+                          <span className="text-cyan-200">DRIVE D:// (ARCHIVE_CORE)</span>
+                          <span className="text-slate-400">200 GB / 440 GB</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-950 border border-cyan-500/10 rounded-full overflow-hidden p-[1px]">
+                          <div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full" style={{ width: "45.4%" }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* NETWORK SIGNAL MATRIX */}
+                  <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col space-y-2 relative overflow-hidden">
+                    <span className="text-[8px] font-mono text-slate-500 uppercase block">NETWORK TELEMETRY</span>
+                    <div className="flex justify-between text-[9px] font-mono">
+                      <span className="text-cyan-400">UP: 151.68 MB</span>
+                      <span className="text-cyan-400">DL: 3.11 MB</span>
+                    </div>
+                    <div className="w-full h-10 bg-slate-950/40 rounded border border-cyan-500/5 overflow-hidden relative">
+                      <svg viewBox="0 0 100 25" className="w-full h-full">
+                        <path
+                          d="M 0 15 Q 25 5 50 18 T 100 10"
+                          fill="none"
+                          stroke="#22d3ee"
+                          strokeWidth="0.8"
+                          opacity="0.6"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Center Column: Primary Reactor & Interaction controls */}
+              {rightPanelMode !== "design" && (
+                <motion.div
                 initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
                 animate={revealStep >= 1 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
                 transition={{ type: "spring", stiffness: 60, damping: 14 }}
-                className={`${showRightPanel ? "md:col-span-6" : "md:col-span-12"} flex flex-col space-y-4 relative transition-all duration-300`}
+                className={`${showRightPanel ? "lg:col-span-6 col-span-12" : "col-span-12"} flex flex-col space-y-4 relative transition-all duration-300`}
                 style={{ pointerEvents: revealStep >= 1 ? "auto" : "none" }}
               >
               {revealStep === 1 && (
@@ -2317,20 +3256,53 @@ I can still map schedules, process identity registries, and synthesize local mic
                 id="jarvis-reactor-panel"
                 className="stark-cyber-panel stark-cyber-bottom-decor p-6 flex flex-col items-center justify-center relative"
               >
-                {/* Restore Right Co-processor Panel Button */}
+                {/* Restore Right Co-processor Panel / 3D CAD buttons */}
                 {!showRightPanel && (
+                  <div className="absolute top-4 left-4 flex items-center gap-2 z-10">
+                    <button
+                      onClick={() => {
+                        setRightPanelMode("design");
+                        setShowRightPanel(true);
+                        localStorage.setItem("jarvis_show_right_panel", "true");
+                        const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                        speakOutput(`Initializing 3D CAD Hologram Studio, ${userHonorific}. Rendering virtual workspace.`);
+                      }}
+                      className="px-3 py-1.5 bg-cyan-950/50 hover:bg-cyan-500/20 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 rounded-lg text-[10px] font-bold font-mono tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+                      title="Open 3D CAD Designer"
+                    >
+                      <Compass className="w-4 h-4 text-cyan-400 animate-[spin_6s_linear_infinite]" />
+                      <span>OPEN 3D CAD</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setRightPanelMode("math");
+                        setShowRightPanel(true);
+                        localStorage.setItem("jarvis_show_right_panel", "true");
+                        const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                        speakOutput(`Restoring primary visual telemetry arrays and co-processor diagnostics, ${userHonorific}.`);
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-950/50 hover:bg-cyan-500/10 border border-slate-800 hover:border-cyan-500/30 text-slate-400 hover:text-cyan-300 rounded-lg text-[10px] font-bold font-mono tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Restore Co-processor Panel"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5 text-cyan-500" />
+                      <span>OPEN PANEL</span>
+                    </button>
+                  </div>
+                )}
+
+                {showRightPanel && rightPanelMode !== "design" && (
                   <button
                     onClick={() => {
-                      setShowRightPanel(true);
-                      localStorage.setItem("jarvis_show_right_panel", "true");
+                      setShowRightPanel(false);
+                      localStorage.setItem("jarvis_show_right_panel", "false");
                       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-                      speakOutput(`Restoring primary visual telemetry arrays and co-processor diagnostics, ${userHonorific}.`);
+                      speakOutput(`Powering down auxiliary panel display, ${userHonorific}.`);
                     }}
-                    className="absolute top-4 left-4 px-2.5 py-1.5 bg-cyan-950/40 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 rounded-lg text-[10px] font-bold font-mono tracking-wider flex items-center gap-1.5 animate-pulse transition-all cursor-pointer"
-                    title="Restore Co-processor Panel"
+                    className="absolute top-4 left-4 px-3 py-1.5 bg-slate-950/50 hover:bg-rose-950/30 border border-slate-800 hover:border-rose-500/30 text-slate-400 hover:text-rose-300 rounded-lg text-[10px] font-bold font-mono tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Hide Co-processor Panel"
                   >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>ACTIVATE CO-PROC</span>
+                    <X className="w-4 h-4 text-rose-400" />
+                    <span>HIDE PANEL</span>
                   </button>
                 )}
 
@@ -2492,6 +3464,59 @@ I can still map schedules, process identity registries, and synthesize local mic
                     </AnimatePresence>
                   </div>
 
+                  {/* Dynamic Pybricks / Python Code Input Console (Below Speaking dialogue box) */}
+                  <div className="w-full bg-slate-950/40 border border-cyan-500/15 rounded-xl p-3 space-y-2.5 relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(6,182,212,0.03)]">
+                    <div className="flex items-center justify-between border-b border-cyan-500/10 pb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                        <span className="text-[8px] font-mono font-bold text-cyan-400 uppercase tracking-widest">
+                          COGNITIVE ROBOTICS CODE INPUT
+                        </span>
+                      </div>
+                      <span className="text-[7px] font-mono text-slate-500 uppercase">
+                        Pybricks & Python compiler
+                      </span>
+                    </div>
+                    
+                    <textarea
+                      value={jarvisCodeInput}
+                      onChange={(e) => setJarvisCodeInput(e.target.value)}
+                      placeholder="# Paste your Pybricks or Python code here...&#10;# E.g.,&#10;# from pybricks.hubs import PrimeHub&#10;# hub = PrimeHub()&#10;# hub.light.on(Color.CYAN)"
+                      className="w-full min-h-[90px] max-h-[180px] bg-slate-950/95 border border-cyan-500/25 rounded-lg p-2.5 text-[10px] font-mono text-cyan-100 placeholder-cyan-500/20 outline-none focus:border-cyan-400/50 shadow-[inset_0_0_8px_rgba(6,182,212,0.08)] resize-y scrollbar-thin"
+                      spellCheck={false}
+                    />
+                    
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!jarvisCodeInput.trim()) {
+                            setErrorNotice("⚠ 입력된 코드가 없습니다. 시뮬레이션할 코드를 입력해 주십시오.");
+                            return;
+                          }
+                          const prompt = `Here is my Pybricks/Python code for simulation and detailed error diagnostics. Please run step-by-step trace simulation logs, identify logical bugs, explain physical mechanical impact, and provide corrected re-engineered blueprint code with SIMULATE_SHOW command at the end:\n\n\`\`\`python\n${jarvisCodeInput}\n\`\`\``;
+                          handleSubmitPrompt(prompt);
+                        }}
+                        disabled={status === "thinking"}
+                        className="flex-1 py-1.5 px-3 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-cyan-300 hover:text-cyan-100 rounded-lg text-[9px] font-bold font-mono tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer uppercase shadow-[0_0_10px_rgba(6,182,212,0.05)] disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>ENGAGE CODE SIMULATION</span>
+                      </button>
+                      
+                      {jarvisCodeInput && (
+                        <button
+                          type="button"
+                          onClick={() => setJarvisCodeInput("")}
+                          className="px-2 py-1.5 bg-slate-900 hover:bg-red-950/20 border border-slate-800 hover:border-red-500/30 text-slate-500 hover:text-red-400 rounded-lg transition-all cursor-pointer font-mono text-[8.5px] uppercase"
+                          title="Clear input"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Operational Voice Buttons Row */}
                   <div className="flex gap-2">
                     <motion.button
@@ -2584,8 +3609,8 @@ I can still map schedules, process identity registries, and synthesize local mic
                     {/* Vocal Engine Toggle */}
                     <div className="space-y-2">
                       <label className="text-cyan-500/80">SPEECH SYNTHESIS DRIVER:</label>
-                      <div className="grid grid-cols-3 gap-1 grid-flow-row">
-                        {(["premium", "browser", "silent"] as const).map((eng) => (
+                      <div className="grid grid-cols-2 gap-1 grid-flow-row">
+                        {(["browser", "silent"] as const).map((eng) => (
                           <button
                             key={eng}
                             onClick={() => {
@@ -2598,32 +3623,11 @@ I can still map schedules, process identity registries, and synthesize local mic
                                 : "bg-slate-950/40 text-slate-500 border-slate-800"
                             }`}
                           >
-                            {eng === "premium" ? "Neural AI" : eng === "browser" ? "Local Syn" : "Muted"}
+                            {eng === "browser" ? "Local Speech" : "Muted"}
                           </button>
                         ))}
                       </div>
                     </div>
-
-                    {voiceEngine === "premium" && (
-                      /* Neural premium TTS voice list selectors */
-                      <div className="space-y-2">
-                        <label className="text-cyan-500/80">NEURAL AI VOICE NAME:</label>
-                        <select
-                          value={premiumVoice}
-                          onChange={(e) => {
-                            stopAllAudio();
-                            setPremiumVoice(e.target.value as any);
-                          }}
-                          className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-cyan-100 outline-none focus:border-cyan-500/40"
-                        >
-                          <option value="Charon">Charon (Deep Bold British - Recommended JARVIS)</option>
-                          <option value="Fenrir">Fenrir (Gravelly Deep Male)</option>
-                          <option value="Puck">Puck (Witty British Accent)</option>
-                          <option value="Kore">Kore (Calm Assistant)</option>
-                          <option value="Zephyr">Zephyr (Light Assistant)</option>
-                        </select>
-                      </div>
-                    )}
 
                     {voiceEngine === "browser" && (
                       /* Local system browser speech selectors with depth customizing sliders */
@@ -2648,6 +3652,86 @@ I can still map schedules, process identity registries, and synthesize local mic
                               ))
                             )}
                           </select>
+                        </div>
+
+                        <div className="pt-0.5 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              stopAllAudio();
+                              const koMale = availableVoices.find((v) => {
+                                if (!v.lang.toLowerCase().startsWith("ko")) return false;
+                                const nameLower = v.name.toLowerCase();
+                                return (
+                                  nameLower.includes("male") ||
+                                  nameLower.includes("남성") ||
+                                  nameLower.includes("minsu") ||
+                                  nameLower.includes("민수") ||
+                                  nameLower.includes("junwoo") ||
+                                  nameLower.includes("준우") ||
+                                  nameLower.includes("chinho") ||
+                                  nameLower.includes("진호") ||
+                                  nameLower.includes("injun") ||
+                                  nameLower.includes("인준") ||
+                                  nameLower.includes("gildong") ||
+                                  nameLower.includes("길동") ||
+                                  nameLower.includes("himchan") ||
+                                  nameLower.includes("힘찬") ||
+                                  nameLower.includes("tae-hoon") ||
+                                  nameLower.includes("taehoon") ||
+                                  nameLower.includes("min-ho") ||
+                                  nameLower.includes("minho") ||
+                                  nameLower.includes("ism-local") ||
+                                  nameLower.includes("ism-network") ||
+                                  nameLower.includes("kdf-local") ||
+                                  nameLower.includes("kdf-network") ||
+                                  (nameLower.includes("siri") && (
+                                    nameLower.includes("남자") || 
+                                    nameLower.includes("male") || 
+                                    nameLower.includes("2") || 
+                                    nameLower.includes("3") || 
+                                    nameLower.includes("4")
+                                  ))
+                                );
+                              }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+
+                              if (koMale) {
+                                setSelectedBrowserVoice(koMale.name);
+                                setBrowserPitch(0.82); // Elegant, polite Korean male baritone (0.55 was too creepy/low)
+                                setBrowserRate(0.94); // Cool deliberate pacing
+                              } else {
+                                alert("로컬 시스템에 등록된 한국어 음성이 발견되지 않았습니다. 브라우저/OS의 한국어 TTS 설정을 확인해 주십시오.");
+                              }
+                            }}
+                            className="flex-1 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[9px] py-1.5 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <span>🇰🇷 한국어 남성</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              stopAllAudio();
+                              const ukVoice = availableVoices.find((v) => {
+                                const langLower = v.lang.toLowerCase();
+                                const nameLower = v.name.toLowerCase();
+                                return (langLower === "en-gb" || langLower.startsWith("en-gb")) && 
+                                       (nameLower.includes("male") || !nameLower.includes("female"));
+                              }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en-gb"))
+                                 || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en"));
+
+                              if (ukVoice) {
+                                setSelectedBrowserVoice(ukVoice.name);
+                                setBrowserPitch(0.85); // Sophisticated English pitch
+                                setBrowserRate(0.95); // Polite British pace
+                              } else {
+                                alert("로컬 시스템에 등록된 영국식 영어(en-GB) 음성이 발견되지 않았습니다. 기본 영어 음성으로 대체됩니다.");
+                              }
+                            }}
+                            className="flex-1 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[9px] py-1.5 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <span>🇬🇧 J.A.R.V.I.S. (UK)</span>
+                          </button>
                         </div>
 
                         {/* Speech Synthesis Pitch controller to make voice deep/bold */}
@@ -2681,6 +3765,53 @@ I can still map schedules, process identity registries, and synthesize local mic
                             onChange={(e) => setBrowserRate(parseFloat(e.target.value))}
                             className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                           />
+                        </div>
+
+                        {/* J.A.R.V.I.S. Voice Modulator Settings */}
+                        <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                          <div className="flex justify-between items-center">
+                            <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px]">
+                              J.A.R.V.I.S. VOICE MODULATOR:
+                            </label>
+                            <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
+                              <button
+                                type="button"
+                                onClick={() => setJarvisChirpEnabled(true)}
+                                className={`px-2 py-0.5 font-bold transition-all ${
+                                  jarvisChirpEnabled
+                                    ? "bg-cyan-500/20 text-cyan-300 border-r border-slate-800"
+                                    : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
+                                }`}
+                              >
+                                ENGAGED
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setJarvisChirpEnabled(false)}
+                                className={`px-2 py-0.5 font-bold transition-all ${
+                                  !jarvisChirpEnabled
+                                    ? "bg-rose-950/40 text-rose-300"
+                                    : "bg-transparent text-slate-500 hover:text-slate-400"
+                                }`}
+                              >
+                                DRY
+                              </button>
+                            </div>
+                          </div>
+                          
+                          <p className="text-[9px] text-slate-400 leading-normal font-mono">
+                            📟 <strong>무제한 아이언맨 무전 수신기 필터</strong>: 활성화 시 자비스가 말하기 직전/직후에 영화 속 아이언맨 슈트 내부 헬멧 무전 클릭(Chirp/Squelch) 및 노이즈 사운드가 실시간 합성됩니다!
+                          </p>
+
+                          <div className="bg-cyan-950/20 border border-cyan-500/20 rounded p-2 text-cyan-400 font-mono text-[9px] flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                              <span>COGNITIVE MATRIX STATUS: UNLIMITED</span>
+                            </div>
+                            <p className="text-slate-400 text-[8.5px] leading-relaxed">
+                              본 브라우저 합성 음성은 Local Web Speech API를 활용하여 <strong>별도의 비용이나 쿼타 소모 없이 100% 무제한</strong>으로 사용하실 수 있습니다.
+                            </p>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2963,27 +4094,82 @@ I can still map schedules, process identity registries, and synthesize local mic
                             )}
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const trimmed = tempApiKey.trim();
-                            setCustomApiKey(trimmed);
-                            localStorage.setItem("jarvis_custom_api_key", trimmed);
-                            if (trimmed) {
-                              setOfflineMode(false);
-                              localStorage.setItem("jarvis_offline_mode", "false");
-                              speakOutput("Personal API key is applied and locked to local memory, Sir.");
-                              setErrorNotice("개인 API 키가 영구 고정 및 최우선 저장 완료되었습니다.");
-                            } else {
-                              speakOutput("API Key cleared.");
-                              setErrorNotice("개인 API 키가 성공적으로 초기화되었습니다.");
-                            }
-                          }}
-                          className="px-3 bg-cyan-950/80 hover:bg-cyan-500/20 border border-cyan-500/40 text-cyan-200 hover:text-cyan-100 rounded text-[10px] font-bold font-mono transition-all uppercase whitespace-nowrap"
-                        >
-                          저장 및 고정
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            disabled={isTestingKey}
+                            onClick={async () => {
+                              const verified = await handleTestApiKey(tempApiKey);
+                              if (verified) {
+                                speakOutput("Uplink verification successful, Sir.");
+                              } else {
+                                speakOutput("Mainframe diagnostic alert. Key verification failed.");
+                              }
+                            }}
+                            className={`px-2 py-1 border text-[10px] font-bold font-mono rounded transition-all uppercase whitespace-nowrap ${
+                              isTestingKey
+                                ? "bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed animate-pulse"
+                                : "bg-cyan-950/50 hover:bg-cyan-500/10 border-cyan-500/30 text-cyan-400 cursor-pointer"
+                            }`}
+                          >
+                            {isTestingKey ? "Testing..." : "연동 테스트"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isTestingKey}
+                            onClick={async () => {
+                              const trimmed = tempApiKey.trim();
+                              if (trimmed) {
+                                const verified = await handleTestApiKey(trimmed);
+                                if (verified) {
+                                  setCustomApiKey(trimmed);
+                                  localStorage.setItem("jarvis_custom_api_key", trimmed);
+                                  setOfflineMode(false);
+                                  localStorage.setItem("jarvis_offline_mode", "false");
+                                  speakOutput("API Key successfully verified and locked to local memory, Sir.");
+                                  setErrorNotice("개인 API 키 검증 완료 및 최우선 고정되었습니다.");
+                                } else {
+                                  speakOutput("Warning, key verification failed. But I have saved it to local arrays per your override.");
+                                  setCustomApiKey(trimmed);
+                                  localStorage.setItem("jarvis_custom_api_key", trimmed);
+                                  setErrorNotice("⚠️ 검증에 실패한 API 키가 수동 저장되었습니다. 키를 다시 한 번 확인해 주십시오.");
+                                }
+                              } else {
+                                setCustomApiKey("");
+                                localStorage.setItem("jarvis_custom_api_key", "");
+                                setKeyTestResult(null);
+                                speakOutput("API Key cleared.");
+                                setErrorNotice("개인 API 키가 성공적으로 초기화되었습니다.");
+                              }
+                            }}
+                            className="px-3 bg-cyan-950 hover:bg-cyan-500/20 border border-cyan-500/50 text-cyan-200 hover:text-cyan-100 rounded text-[10px] font-bold font-mono transition-all uppercase whitespace-nowrap cursor-pointer"
+                          >
+                            저장 및 고정
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Key verification result feedback */}
+                      {keyTestResult && (
+                        <div className={`p-2 rounded text-[10px] font-mono border leading-relaxed ${
+                          keyTestResult.success 
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                            : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                        }`}>
+                          {keyTestResult.success ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-bold">✔ Satellite Uplink Active:</span>
+                              <span>{keyTestResult.message}</span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-bold">✘ Connection Interrupted:</span>
+                              <span className="break-words">{keyTestResult.error}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <p className="text-[9px] text-slate-400 leading-normal font-mono">
                         기기에 안전하게 암호화되어 로컬 저장됩니다. 429 할당량 한도 초과 오류를 완전히 우회합니다.
                       </p>
@@ -3014,35 +4200,270 @@ I can still map schedules, process identity registries, and synthesize local mic
                         }
                       </p>
                     </div>
+
+                    {/* SYSTEM SELF-DIAGNOSTIC & AUTOPILOT REPAIR (자가 진단 및 자동 복구) */}
+                    <div className="space-y-3 pt-3 border-t border-cyan-500/15">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                          <span>System Self-Diagnostic (자가 진단 및 자동 교정)</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowDiagnosticSection(!showDiagnosticSection)}
+                          className="px-2 py-0.5 bg-cyan-950/40 hover:bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded text-[9px] font-bold font-mono transition-all cursor-pointer"
+                        >
+                          {showDiagnosticSection ? "HIDE CONSOLE ▲" : "OPEN CONSOLE ▼"}
+                        </button>
+                      </div>
+
+                      <p className="text-[9px] text-slate-400 leading-normal font-mono">
+                        API 키 연동 오류, 백엔드 연결 상태, 음성 신호 채널을 실시간 진단하고 오기입된 따옴표나 공백 등을 <strong>원클릭 인공지능 자율 오토파일럿(Autopilot)</strong>으로 즉시 자동 수정합니다.
+                      </p>
+
+                      <AnimatePresence>
+                        {showDiagnosticSection && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="space-y-3 border border-cyan-500/20 bg-slate-950/80 p-3.5 rounded-xl overflow-hidden"
+                          >
+                            {/* Actions bar */}
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={isDiagnosticRunning || repairStatus === "fixing"}
+                                onClick={runDiagnostics}
+                                className={`flex-1 py-1.5 px-3 rounded text-[10px] font-bold font-mono border transition-all uppercase flex items-center justify-center gap-1.5 ${
+                                  isDiagnosticRunning
+                                    ? "bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed"
+                                    : "bg-cyan-950/80 hover:bg-cyan-500/20 border-cyan-500/30 text-cyan-300 cursor-pointer"
+                                }`}
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isDiagnosticRunning ? "animate-spin" : ""}`} />
+                                <span>{isDiagnosticRunning ? "Scanning..." : "자가 진단 시작"}</span>
+                              </button>
+
+                              {detectedErrors.some(e => e.fixable) && (
+                                <button
+                                  type="button"
+                                  disabled={repairStatus === "fixing" || isDiagnosticRunning}
+                                  onClick={runAutopilotRepair}
+                                  className={`flex-1 py-1.5 px-3 rounded text-[10px] font-bold font-mono border transition-all uppercase flex items-center justify-center gap-1.5 ${
+                                    repairStatus === "fixing"
+                                      ? "bg-amber-500/10 border-amber-500/20 text-amber-400 cursor-not-allowed animate-pulse"
+                                      : "bg-emerald-950/80 hover:bg-emerald-500/20 border-emerald-500/40 text-emerald-300 cursor-pointer shadow-[0_0_8px_rgba(16,185,129,0.15)]"
+                                  }`}
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>{repairStatus === "fixing" ? "Repairing..." : "오토파일럿 자동 복구"}</span>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Live diagnostic metrics list */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 font-mono text-[9.5px]">
+                              {diagnosticSteps.map(step => (
+                                <div key={step.id} className="bg-slate-900/50 p-2 rounded-lg border border-cyan-500/5 flex items-start gap-2">
+                                  {step.status === "pending" && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500 mt-1" />
+                                  )}
+                                  {step.status === "running" && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping mt-1" />
+                                  )}
+                                  {step.status === "success" && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_5px_#10b981] mt-1" />
+                                  )}
+                                  {step.status === "error" && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_5px_#f43f5e] animate-pulse mt-1" />
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-bold flex justify-between">
+                                      <span className="text-slate-300">{step.name}</span>
+                                      <span className={
+                                        step.status === "success" ? "text-emerald-400" :
+                                        step.status === "error" ? "text-rose-400" :
+                                        step.status === "running" ? "text-cyan-400 animate-pulse" : "text-slate-500"
+                                      }>
+                                        {step.status.toUpperCase()}
+                                      </span>
+                                    </div>
+                                    <p className="text-[8.5px] text-slate-400 truncate mt-0.5">{step.detail}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Detected Diagnostic Vulnerabilities Alerts */}
+                            {detectedErrors.length > 0 && (
+                              <div className="space-y-1.5 border-t border-cyan-500/10 pt-2.5">
+                                <span className="text-[8px] font-bold text-amber-500 uppercase tracking-widest block">
+                                  ⚠ DETECTED COMM-GRID VULNERABILITIES ({detectedErrors.length})
+                                </span>
+                                {detectedErrors.map((err, idx) => (
+                                  <div key={idx} className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[9px] leading-relaxed space-y-1">
+                                    <div className="font-bold flex items-center gap-1">
+                                      <span className="w-1 h-1 rounded-full bg-rose-500 animate-ping" />
+                                      <span>[{err.code}] {err.message}</span>
+                                    </div>
+                                    <p className="text-slate-300 text-[8.5px] pl-2">{err.recommendation}</p>
+                                    {err.fixable && (
+                                      <div className="pl-2 pt-0.5">
+                                        <span className="text-[8px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 py-0.2 rounded">
+                                          ✔ 오토파일럿 복구 지원 (Autopilot Fixable)
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Tech console logging terminal */}
+                            <div className="space-y-1">
+                              <span className="text-[8px] font-bold text-slate-500 uppercase tracking-wider block">
+                                LIVE MAINFRAME TELEMETRY LOGS
+                              </span>
+                              <div className="bg-slate-950 p-2 rounded-lg border border-cyan-500/10 h-28 overflow-y-auto font-mono text-[8px] text-cyan-400/80 space-y-0.5 scrollbar-thin scrollbar-thumb-cyan-500/10">
+                                {diagnosticLogs.length === 0 ? (
+                                  <span className="text-slate-600 block italic text-center py-4">No telemetry diagnostic logged. Launch scan.</span>
+                                ) : (
+                                  diagnosticLogs.map((log, idx) => (
+                                    <span key={idx} className="block leading-tight break-words">
+                                      {log}
+                                    </span>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
             </motion.div>
+            )}
 
 
-            {/* Holographic Scheduling or Mathematical Array (Right Column - Expanded to md:col-span-6) */}
-            {showRightPanel && (
+            {/* Holographic Scheduling or Mathematical Array (Right Column - Expanded to lg:col-span-3) */}
+            {showRightPanel && rightPanelMode !== "design" && (
               <motion.div
                 initial={{ opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
-              animate={revealStep >= 2 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
-              transition={{ type: "spring", stiffness: 60, damping: 14 }}
-              className="md:col-span-6 flex flex-col h-auto min-h-[560px] space-y-3 relative"
-              style={{ pointerEvents: revealStep >= 2 ? "auto" : "none" }}
-            >
-              {revealStep === 2 && (
-                <motion.div
-                  initial={{ top: "-5%", opacity: 1 }}
-                  animate={{ top: "105%", opacity: [0, 1, 1, 0] }}
-                  transition={{ duration: 1.6, ease: "easeInOut" }}
-                  className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_rgba(34,211,238,0.95)] z-50 pointer-events-none"
-                />
-              )}
+                animate={revealStep >= 2 ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : { opacity: 0, y: 35, scale: 0.94, filter: "blur(12px)" }}
+                transition={{ type: "spring", stiffness: 60, damping: 14 }}
+                className="lg:col-span-3 col-span-12 flex flex-col space-y-4 relative"
+                style={{ pointerEvents: revealStep >= 2 ? "auto" : "none" }}
+              >
+                {revealStep === 2 && (
+                  <motion.div
+                    initial={{ top: "-5%", opacity: 1 }}
+                    animate={{ top: "105%", opacity: [0, 1, 1, 0] }}
+                    transition={{ duration: 1.6, ease: "easeInOut" }}
+                    className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_rgba(34,211,238,0.95)] z-50 pointer-events-none"
+                  />
+                )}
+
+                {/* 1. DIGITAL TECH CLOCK (Direct Image Detail!) */}
+                <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col items-center justify-center space-y-1 relative overflow-hidden">
+                  <span className="text-[7.5px] font-mono text-slate-500 tracking-widest uppercase">STARK CHRONOS SYSTEM</span>
+                  <div className="font-mono text-xl font-black text-cyan-300 drop-shadow-[0_0_10px_rgba(34,211,238,0.7)] tracking-wider">
+                    {currentLocalTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
+                  </div>
+                  <span className="text-[7.5px] font-mono text-cyan-500/60 uppercase">
+                    {currentLocalTime.toLocaleDateString([], { weekday: "long", year: "numeric", month: "short", day: "numeric" })}
+                  </span>
+                </div>
+
+                {/* 2. AMBIENT WEATHER HUD (Direct Image Detail!) */}
+                <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col space-y-3 relative overflow-hidden">
+                  <div className="flex justify-between items-center border-b border-cyan-500/10 pb-1.5">
+                    <span className="text-[10px] font-bold font-mono text-cyan-300 tracking-widest uppercase">JUAREZ, MX / MALIBU</span>
+                    <span className="text-[8px] font-mono text-slate-500">REALTIME</span>
+                  </div>
+
+                  <div className="flex items-center justify-between font-mono">
+                    <span className="text-2xl font-black text-cyan-100 drop-shadow-[0_0_8px_rgba(6,182,212,0.4)]">30°C</span>
+                    <div className="text-right">
+                      <span className="text-[10px] font-extrabold text-cyan-300 tracking-widest uppercase block leading-none">FAIR</span>
+                      <span className="text-[7px] text-slate-500 tracking-wider">UPDATED SECURE</span>
+                    </div>
+                  </div>
+
+                  {/* Weather parameters grid */}
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[8px] font-mono text-slate-400">
+                    <div className="flex justify-between border-b border-cyan-500/5 pb-0.5">
+                      <span className="text-slate-500">HUMIDITY:</span>
+                      <span className="text-cyan-300 font-bold">14%</span>
+                    </div>
+                    <div className="flex justify-between border-b border-cyan-500/5 pb-0.5">
+                      <span className="text-slate-500">FEELS LIKE:</span>
+                      <span className="text-cyan-300 font-bold">30°C</span>
+                    </div>
+                    <div className="flex justify-between border-b border-cyan-500/5 pb-0.5">
+                      <span className="text-slate-500">PRECIP:</span>
+                      <span className="text-cyan-300 font-bold">0%</span>
+                    </div>
+                    <div className="flex justify-between border-b border-cyan-500/5 pb-0.5">
+                      <span className="text-slate-500">VISIBILITY:</span>
+                      <span className="text-cyan-300 font-bold">16.1 KM</span>
+                    </div>
+                    <div className="flex justify-between border-b border-cyan-500/5 pb-0.5">
+                      <span className="text-slate-500">WIND:</span>
+                      <span className="text-cyan-300 font-bold">8 KM/H (E)</span>
+                    </div>
+                    <div className="flex justify-between border-b border-cyan-500/5 pb-0.5">
+                      <span className="text-slate-500">PRESSURE:</span>
+                      <span className="text-cyan-300 font-bold">1015 MB</span>
+                    </div>
+                  </div>
+
+                  {/* Moon phase (Direct Image Detail!) */}
+                  <div className="flex items-center justify-between text-[7.5px] font-mono bg-cyan-950/20 border border-cyan-500/10 p-1 rounded text-cyan-300">
+                    <span>MOON: WANING CRESCENT</span>
+                    <span className="w-2 h-2 rounded-full border border-cyan-400 bg-slate-950 flex overflow-hidden">
+                      <span className="w-1 h-full bg-cyan-400/40" />
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3. THERMAL SENSORS GAUGE (Direct Image Detail!) */}
+                <div className="stark-cyber-panel stark-cyber-bottom-decor p-4 flex flex-col space-y-2 relative overflow-hidden">
+                  <div className="flex justify-between items-center border-b border-cyan-500/10 pb-1.5">
+                    <span className="text-[10px] font-bold font-mono text-cyan-300 tracking-widest uppercase">THERMAL SENSORS</span>
+                    <span className="text-[8px] font-mono text-cyan-400">CORE SAFE</span>
+                  </div>
+
+                  <div className="space-y-1.5 font-mono text-[8.5px]">
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-slate-400">
+                        <span>CPU TEMP:</span>
+                        <span className="text-cyan-300 font-bold">51°C</span>
+                      </div>
+                      <div className="w-full h-1 bg-slate-950 rounded border border-cyan-500/5">
+                        <div className="h-full bg-cyan-400 rounded" style={{ width: "51%" }} />
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-slate-400">
+                        <span>GPU TEMP:</span>
+                        <span className="text-cyan-300 font-bold">48°C</span>
+                      </div>
+                      <div className="w-full h-1 bg-slate-950 rounded border border-cyan-500/5">
+                        <div className="h-full bg-cyan-400 rounded" style={{ width: "48%" }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
               {/* Holographic YouTube Stream overlay inside Right Column */}
               <AnimatePresence>
-                {activeYoutubeQuery && (
+                {activeYoutubeQuery && !isYoutubeFloating && (
                   <motion.div
-                    key="holographic-yt-player"
+                    key="holographic-yt-player-inline"
                     initial={{ opacity: 0, scale: 0.95, y: -10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: -10 }}
@@ -3052,6 +4473,11 @@ I can still map schedules, process identity registries, and synthesize local mic
                       query={activeYoutubeQuery}
                       type={youtubePlayType === "channel" ? "channel" : "song"}
                       isMinimized={isYoutubeMinimized}
+                      isFloating={false}
+                      onToggleFloating={(val) => {
+                        setIsYoutubeFloating(val);
+                        localStorage.setItem("jarvis_yt_floating", String(val));
+                      }}
                       onClose={() => {
                         setActiveYoutubeQuery(null);
                         setForceDirectTrackId(null);
@@ -3086,7 +4512,7 @@ I can still map schedules, process identity registries, and synthesize local mic
 
               {/* Tab Selector Buttons */}
               <div className="flex items-center gap-2 relative z-10">
-                <div className="flex-1 grid grid-cols-3 gap-1 bg-slate-950/50 p-1 border border-cyan-500/10 rounded-xl font-mono text-[9px]">
+                <div className="flex-1 grid grid-cols-6 gap-1 bg-slate-950/50 p-1 border border-cyan-500/10 rounded-xl font-mono text-[8px]">
                   <button
                     type="button"
                     onClick={() => setRightPanelMode("math")}
@@ -3096,8 +4522,9 @@ I can still map schedules, process identity registries, and synthesize local mic
                         : "border border-transparent text-slate-500 hover:text-slate-300"
                     }`}
                   >
-                    <Calculator className="w-3.5 h-3.5 font-bold" />
-                    <span>MATH CORE</span>
+                    <Calculator className="w-3 h-3 font-bold" />
+                    <span className="hidden xs:inline">MATH CORE</span>
+                    <span className="xs:hidden">MATH</span>
                   </button>
                   <button
                     type="button"
@@ -3108,8 +4535,9 @@ I can still map schedules, process identity registries, and synthesize local mic
                         : "border border-transparent text-slate-500 hover:text-slate-300"
                     }`}
                   >
-                    <Calendar className="w-3.5 h-3.5" />
-                    <span>AGENDA TRACK</span>
+                    <Calendar className="w-3 h-3" />
+                    <span className="hidden xs:inline">AGENDA</span>
+                    <span className="xs:hidden">SCHED</span>
                   </button>
                   <button
                     type="button"
@@ -3120,8 +4548,53 @@ I can still map schedules, process identity registries, and synthesize local mic
                         : "border border-transparent text-slate-500 hover:text-slate-300"
                     }`}
                   >
-                    <Headphones className="w-3.5 h-3.5" />
-                    <span>AUDIO FEED</span>
+                    <Headphones className="w-3 h-3" />
+                    <span className="hidden xs:inline">AUDIO</span>
+                    <span className="xs:hidden">AUDIO</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelMode("pybricks")}
+                    className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      rightPanelMode === "pybricks"
+                        ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 animate-pulse"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    <Cpu className="w-3 h-3 text-cyan-400" />
+                    <span>PYBRICKS</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelMode("design")}
+                    className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      rightPanelMode === "design"
+                        ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    <Compass className="w-3 h-3 text-cyan-400 animate-pulse" />
+                    <span className="hidden xs:inline">3D CAD</span>
+                    <span className="xs:hidden">3D CAD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImageSearchModal(!showImageSearchModal);
+                      // Reset rightPanelMode to "math" if we were on images to prevent dead states
+                      if (rightPanelMode === "images") {
+                        setRightPanelMode("math");
+                      }
+                    }}
+                    className={`py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      showImageSearchModal
+                        ? "bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 animate-pulse"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    <Image className="w-3 h-3 text-cyan-400" />
+                    <span className="hidden xs:inline">OPTICAL</span>
+                    <span className="xs:hidden">OPTI</span>
                   </button>
                 </div>
                 <button
@@ -3141,6 +4614,19 @@ I can still map schedules, process identity registries, and synthesize local mic
 
               {rightPanelMode === "math" ? (
                 <MathProcessor onAskJarvis={handleSubmitPrompt} status={status} />
+              ) : rightPanelMode === "pybricks" ? (
+                <PybricksDeveloperHub onAskJarvis={handleSubmitPrompt} status={status} />
+              ) : rightPanelMode === "design" ? (
+                <Holographic3DDesigner initialQuery={activeDesignQuery} onAskJarvis={handleSubmitPrompt} status={status} />
+              ) : rightPanelMode === "images" ? (
+                <HolographicImageSearch
+                  initialQuery={activeImageQuery}
+                  onAskJarvis={handleSubmitPrompt}
+                  onAttachImage={(imgUrlOrBase64) => {
+                    setSelectedImage(imgUrlOrBase64);
+                  }}
+                  status={status}
+                />
               ) : rightPanelMode === "media" ? (
                 <HolographicMediaLoader
                   onPlaySong={(query, type) => {
@@ -3270,7 +4756,143 @@ I can still map schedules, process identity registries, and synthesize local mic
               )}
             </motion.div>
             )}
+
+            {rightPanelMode === "design" && showRightPanel && (
+              <div className="col-span-12 w-full animate-fadeIn">
+                <Holographic3DDesigner
+                  initialQuery={activeDesignQuery}
+                  onAskJarvis={handleSubmitPrompt}
+                  status={status}
+                  onClose={() => {
+                    setRightPanelMode("math");
+                    setShowRightPanel(false);
+                    localStorage.setItem("jarvis_show_right_panel", "false");
+                    const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                    speakOutput(`Exiting 3D CAD mode, ${userHonorific}. Loading main coprocessor.`);
+                  }}
+                />
+              </div>
+            )}
             </div> {/* <-- Closed inner grid container */}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Global Floating YouTube Player */}
+      <AnimatePresence>
+        {activeYoutubeQuery && (isYoutubeFloating || !showRightPanel) && (
+          <HolographicYoutubePlayer
+            query={activeYoutubeQuery}
+            type={youtubePlayType === "channel" ? "channel" : "song"}
+            isMinimized={isYoutubeMinimized}
+            isFloating={true}
+            onToggleFloating={(val) => {
+              if (showRightPanel) {
+                setIsYoutubeFloating(val);
+                localStorage.setItem("jarvis_yt_floating", String(val));
+              } else {
+                setErrorNotice("🖥️ 보조 연산 패널이 꺼져 있어 플레이어가 플로팅 모드로 유지됩니다.");
+              }
+            }}
+            onClose={() => {
+              setActiveYoutubeQuery(null);
+              setForceDirectTrackId(null);
+            }}
+            onToggleMinimize={() => setIsYoutubeMinimized(!isYoutubeMinimized)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Decoupled Floating Optical Image Search Window */}
+      <AnimatePresence>
+        {showImageSearchModal && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 50 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 50 }}
+            drag
+            dragMomentum={false}
+            dragHandleClassName="drag-handle"
+            className="fixed bottom-10 right-10 z-[100] w-[450px] max-w-[95vw] bg-slate-950/95 backdrop-blur-xl border-2 border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col overflow-hidden"
+          >
+            {/* Draggable Drag Handle Bar */}
+            <div className="drag-handle bg-gradient-to-r from-slate-950 to-cyan-950/40 px-4 py-2 border-b border-cyan-500/20 flex items-center justify-between cursor-move select-none">
+              <div className="flex items-center gap-2 pointer-events-none">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase tracking-widest">
+                  OPTICAL HUB [DRAGGABLE]
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[8px] font-mono text-cyan-500/50 uppercase tracking-tight mr-2">CO-PROCESSOR</span>
+                <button
+                  type="button"
+                  onClick={() => setShowImageSearchModal(false)}
+                  className="p-1 bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+                  title="Close Window"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Holographic Search Body */}
+            <div className="p-1">
+              <HolographicImageSearch
+                initialQuery={activeImageQuery}
+                onAskJarvis={handleSubmitPrompt}
+                onAttachImage={(imgUrlOrBase64) => {
+                  setSelectedImage(imgUrlOrBase64);
+                }}
+                status={status}
+                onClose={() => setShowImageSearchModal(false)}
+                isFloating={true}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Decoupled Floating Holographic Simulation Window */}
+      <AnimatePresence>
+        {showSimulationModal && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 50 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 50 }}
+            drag
+            dragMomentum={false}
+            dragHandleClassName="drag-handle"
+            className="fixed bottom-10 left-10 md:left-auto md:right-[500px] z-[100] w-[750px] max-w-[95vw] bg-slate-950/95 backdrop-blur-xl border-2 border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(6,182,212,0.2)] flex flex-col overflow-hidden"
+          >
+            {/* Draggable Drag Handle Bar */}
+            <div className="drag-handle bg-gradient-to-r from-slate-950 to-cyan-950/40 px-4 py-2.5 border-b border-cyan-500/20 flex items-center justify-between cursor-move select-none">
+              <div className="flex items-center gap-2 pointer-events-none">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase tracking-widest">
+                  STARK COGNITIVE SIMULATOR [DRAGGABLE]
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[8px] font-mono text-cyan-500/50 uppercase tracking-tight mr-2">MAINFRAME SOLVER ENGAGED</span>
+                <button
+                  type="button"
+                  onClick={() => setShowSimulationModal(false)}
+                  className="p-1 bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+                  title="Close Window"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Holographic Simulation Body */}
+            <div>
+              <HolographicSimulation
+                initialQuery={activeSimulationQuery}
+                onClose={() => setShowSimulationModal(false)}
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

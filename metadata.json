@@ -1,6 +1,6 @@
 {
   "name": "JARVIS Voice Assistant",
-  "description": "An interactive vocal assistant inspired by Iron Man's JARVIS that speaks in English with a deep, bold male voice.",
+  "description": "An interactive vocal assistant inspired by Iron Man's JARVIS that speaks in English with a deep, bold male voice and builds custom LEGO Pybricks automation scripts.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
