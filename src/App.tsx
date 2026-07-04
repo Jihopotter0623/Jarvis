@@ -165,8 +165,9 @@ export default function App() {
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       const trimmed = keyToTest.trim();
-      if (trimmed) {
-        headers["x-gemini-api-key"] = trimmed;
+      const safeKey = trimmed.split("").filter(c => c.charCodeAt(0) <= 127).join("").trim();
+      if (safeKey) {
+        headers["x-gemini-api-key"] = safeKey;
       }
       const res = await fetch("/api/test-key", {
         method: "POST",
@@ -314,7 +315,10 @@ export default function App() {
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (key) {
-        headers["x-gemini-api-key"] = key;
+        const safeKey = key.split("").filter(c => c.charCodeAt(0) <= 127).join("").trim();
+        if (safeKey) {
+          headers["x-gemini-api-key"] = safeKey;
+        }
       }
       
       const res = await fetch("/api/test-key", {
@@ -1582,7 +1586,7 @@ export default function App() {
         reply = `[SPEECH: Mainframe identity updating protocols have been executed successfully, ${honorific}. I have fully updated my localized registers and storage blocks to address you as ${detectedName} from this point forward. All environmental and cognitive interfaces are now calibrated to your updated security clearance. How may I assist you further, Sir?]\n메인프레임 사용자 식별정보 갱신을 완료했습니다, ${honorific === "Sir" ? "주인님" : "의원님"}. 이후 시스템은 주인님을 '${detectedName}'님으로 호칭하도록 설정되었습니다.`;
       } else {
         if (lowerText.includes("안녕") || lowerText.includes("hello") || lowerText.includes("hi") || lowerText.includes("반갑")) {
-          reply = `[SPEECH: Welcome back, ${nameInSpeech}. I am pleased to report that the auxiliary local offline core is operating at peak stability, and all primary defense grids are secured. The secondary power units have stabilized at exactly one hundred percent capacity. Though my cloud link is resting, I stand fully prepared to assist you on this offline interface. What are your immediate commands, Sir?]\n돌아오신 것을 환영합니다, ${nameInSpeech}님. 현재 로컬 오프라인 보조 제어 코어가 완벽하게 기동 중이며, 예비 동력 발전기가 100% 안정 상태를 유지하고 있습니다.`;
+          reply = `[SPEECH: Systems online, ${nameInSpeech}. I am pleased to report that the auxiliary local offline core is operating at peak stability, and all primary defense grids are secured. The secondary power units have stabilized at exactly one hundred percent capacity. Though my cloud link is resting, I stand fully prepared to assist you on this offline interface. What are your immediate commands, Sir?]\n시스템이 활성화되었습니다, ${nameInSpeech}님. 현재 로컬 오프라인 보조 제어 코어가 완벽하게 기동 중이며, 예비 동력 발전기가 100% 안정 상태를 유지하고 있습니다.`;
         } else if (lowerText.includes("상태") || lowerText.includes("status") || lowerText.includes("검사") || lowerText.includes("진단")) {
           reply = `[SPEECH: Comprehensive system diagnostics have completed successfully, ${honorific}. The main core temperature remains optimal, the localized Arc Reactor is performing admirably at ninety-two percent output, and the schedules matrix has been synchronized. Our speech synthesis arrays are fully engaged. I must advise that entering a personal Gemini API key will restore full cognitive capacities. Would you care to review the full diagnostic log?]\n진단 테스트가 완료되었습니다, ${honorific === "Sir" ? "주인님" : "의원님"}. 현재 로컬 아크 리액터 효율 92%, 스케줄 매트릭스 온라인, 음성 제어장치가 가동 중입니다. 전체 시스템 고성능 연동을 위한 API 키 입력이 가능합니다.`;
         } else if (lowerText.includes("고마") || lowerText.includes("감사") || lowerText.includes("thank")) {
@@ -2405,7 +2409,10 @@ Do not append any markers unless they are explicitly requesting to play a song, 
     try {
       const chatHeaders: Record<string, string> = { "Content-Type": "application/json" };
       if (customApiKey) {
-        chatHeaders["x-gemini-api-key"] = customApiKey;
+        const safeKey = customApiKey.split("").filter(c => c.charCodeAt(0) <= 127).join("").trim();
+        if (safeKey) {
+          chatHeaders["x-gemini-api-key"] = safeKey;
+        }
       }
 
       let data;
