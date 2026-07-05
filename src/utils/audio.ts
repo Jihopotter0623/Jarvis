@@ -520,3 +520,184 @@ export function playBootSound(): void {
     console.error("Boot sound generation failed:", e);
   }
 }
+
+// Autocorrelation-based pitch detector for speech frequency tracking
+export function detectPitch(buffer: Uint8Array, sampleRate: number): number {
+  const SIZE = buffer.length;
+  let sumOfSquares = 0;
+  for (let i = 0; i < SIZE; i++) {
+    const val = (buffer[i] - 128) / 128;
+    sumOfSquares += val * val;
+  }
+  if (sumOfSquares < 0.01) return -1; // too quiet
+
+  const r = new Float32Array(SIZE);
+  for (let lag = 0; lag < SIZE; lag++) {
+    let sum = 0;
+    for (let i = 0; i < SIZE - lag; i++) {
+      const val1 = (buffer[i] - 128) / 128;
+      const val2 = (buffer[i + lag] - 128) / 128;
+      sum += val1 * val2;
+    }
+    r[lag] = sum;
+  }
+
+  // Find the first dip (local minimum) to avoid matching the central peak
+  let dipIndex = 0;
+  for (let i = 0; i < SIZE - 1; i++) {
+    if (r[i] < r[i + 1]) {
+      dipIndex = i;
+      break;
+    }
+  }
+
+  // If no clear dip was found, search after the lag of 10 samples
+  const startIndex = dipIndex > 0 ? dipIndex : 10;
+  
+  // Find the peak of autocorrelation after the dip
+  let maxVal = -1;
+  let maxIndex = -1;
+  for (let i = startIndex; i < SIZE; i++) {
+    if (r[i] > maxVal) {
+      maxVal = r[i];
+      maxIndex = i;
+    }
+  }
+
+  if (maxIndex > 0 && maxVal > 0.15) {
+    const pitch = sampleRate / maxIndex;
+    // Human voice speaking frequency ranges from 60Hz to 800Hz typically
+    if (pitch >= 65 && pitch <= 700) {
+      return pitch;
+    }
+  }
+  return -1;
+}
+
+// Calculate the spectral centroid (voice brightness/timbre signature)
+export function getSpectralCentroid(freqData: Uint8Array, sampleRate: number): number {
+  const numBins = freqData.length;
+  const binWidth = (sampleRate / 2) / numBins;
+  let numerator = 0;
+  let denominator = 0;
+  for (let i = 0; i < numBins; i++) {
+    const freq = i * binWidth;
+    const amplitude = freqData[i];
+    numerator += freq * amplitude;
+    denominator += amplitude;
+  }
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
+// Structure for voice feature profiles
+export interface VoiceProfile {
+  avgPitch: number;
+  avgCentroid: number;
+  enrolled: boolean;
+  sampleCount: number;
+}
+
+// Function to run real-time analyzer on a media stream for a given duration
+export async function analyzeVoiceStream(
+  stream: MediaStream,
+  durationMs: number,
+  onProgress?: (data: { currentPitch: number; currentCentroid: number; progress: number }) => void
+): Promise<VoiceProfile> {
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  const ctx = new AudioContextClass();
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+
+  const sampleRate = ctx.sampleRate;
+  const timeBuffer = new Uint8Array(analyser.fftSize);
+  const freqBuffer = new Uint8Array(analyser.frequencyBinCount);
+
+  const pitches: number[] = [];
+  const centroids: number[] = [];
+
+  const startTime = Date.now();
+  const checkInterval = 100; // ms between analysis frames
+
+  return new Promise((resolve) => {
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= durationMs) {
+        clearInterval(interval);
+        
+        // Clean up audio nodes
+        try {
+          source.disconnect();
+          analyser.disconnect();
+          ctx.close();
+        } catch (e) {
+          console.error("Error during analyser cleanup:", e);
+        }
+
+        // Calculate averages
+        const validPitches = pitches.filter(p => p > 0);
+        const validCentroids = centroids.filter(c => c > 0);
+
+        const avgPitch = validPitches.length > 0
+          ? validPitches.reduce((sum, p) => sum + p, 0) / validPitches.length
+          : 150; // default backup frequency
+
+        const avgCentroid = validCentroids.length > 0
+          ? validCentroids.reduce((sum, c) => sum + c, 0) / validCentroids.length
+          : 1200; // default backup timbre
+
+        resolve({
+          avgPitch: Math.round(avgPitch * 10) / 10,
+          avgCentroid: Math.round(avgCentroid * 10) / 10,
+          enrolled: true,
+          sampleCount: validPitches.length
+        });
+        return;
+      }
+
+      analyser.getByteTimeDomainData(timeBuffer);
+      analyser.getByteFrequencyData(freqBuffer);
+
+      const currentPitch = detectPitch(timeBuffer, sampleRate);
+      const currentCentroid = getSpectralCentroid(freqBuffer, sampleRate);
+
+      if (currentPitch > 0) {
+        pitches.push(currentPitch);
+      }
+      if (currentCentroid > 100) {
+        centroids.push(currentCentroid);
+      }
+
+      if (onProgress) {
+        onProgress({
+          currentPitch,
+          currentCentroid,
+          progress: Math.min(100, Math.round((elapsed / durationMs) * 100))
+        });
+      }
+    }, checkInterval);
+  });
+}
+
+// Function to calculate similarity percentage between current and enrolled profiles
+export function calculateVoiceSimilarity(
+  current: { pitch: number; centroid: number },
+  enrolled: VoiceProfile
+): number {
+  if (!enrolled.enrolled) return 0;
+
+  // Let's compare pitch (fundamental frequency) - weight is 55%
+  const pitchDiffPct = Math.abs(current.pitch - enrolled.avgPitch) / enrolled.avgPitch;
+  // A difference of 25% or more gets 0 score on pitch
+  const pitchScore = Math.max(0, 1 - (pitchDiffPct / 0.25)) * 100;
+
+  // Let's compare spectral centroid (timbre brightness) - weight is 45%
+  const centroidDiffPct = Math.abs(current.centroid - enrolled.avgCentroid) / enrolled.avgCentroid;
+  // A difference of 35% or more gets 0 score on timbre
+  const centroidScore = Math.max(0, 1 - (centroidDiffPct / 0.35)) * 100;
+
+  const totalScore = (pitchScore * 0.55) + (centroidScore * 0.45);
+  return Math.round(totalScore);
+}

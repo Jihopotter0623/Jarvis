@@ -33,7 +33,7 @@ import {
 import ArcReactor from "./components/ArcReactor";
 import AudioVisualizer from "./components/AudioVisualizer";
 import { ChatMessage } from "./components/JarvisConsole";
-import { getSpeechRecognition, speakWithBrowser, playRawPCM, playBootSound, playRadioChirp } from "./utils/audio";
+import { getSpeechRecognition, speakWithBrowser, playRawPCM, playBootSound, playRadioChirp, analyzeVoiceStream, calculateVoiceSimilarity, detectPitch, getSpectralCentroid, type VoiceProfile } from "./utils/audio";
 import MathProcessor from "./components/MathProcessor";
 import Holographic3DDesigner from "./components/Holographic3DDesigner";
 import PybricksDeveloperHub from "./components/PybricksDeveloperHub";
@@ -645,12 +645,17 @@ export default function App() {
     localStorage.setItem("jarvis_always_listening", alwaysListeningEn.toString());
   }, [alwaysListeningEn]);
 
-  // Bypass wake word: directly hear commands without saying "자비스 / Jarvis" (Enabled by default based on operator request)
+  // Bypass wake word: directly hear commands without saying "자비스 / Jarvis" (Disabled by default so that saying "자비스" is required)
   const [bypassWakeWord, setBypassWakeWord] = useState<boolean>(
-    () => localStorage.getItem("jarvis_bypass_wakeword") !== "false"
+    () => {
+      const stored = localStorage.getItem("jarvis_bypass_wakeword");
+      return stored === "true"; // Defaults to false
+    }
   );
 
+  const bypassWakeWordRef = useRef<boolean>(bypassWakeWord);
   useEffect(() => {
+    bypassWakeWordRef.current = bypassWakeWord;
     localStorage.setItem("jarvis_bypass_wakeword", bypassWakeWord.toString());
   }, [bypassWakeWord]);
 
@@ -662,6 +667,198 @@ export default function App() {
   useEffect(() => {
     continuousVoiceModeRef.current = continuousVoiceMode;
   }, [continuousVoiceMode]);
+
+  // Track if we triggered active listening via wake word "자비스"
+  const voiceTriggeredActiveListeningRef = useRef<boolean>(false);
+
+  // Speaker Verification (내 목소리 전용 반응) States
+  const [speakerVerificationEnabled, setSpeakerVerificationEnabled] = useState<boolean>(
+    () => {
+      // Set to false by default and clear any saved "true" setting per operator's request
+      const saved = localStorage.getItem("jarvis_speaker_verification_enabled");
+      if (saved === "true") {
+        localStorage.setItem("jarvis_speaker_verification_enabled", "false");
+      }
+      return false;
+    }
+  );
+  const speakerVerificationEnabledRef = useRef<boolean>(speakerVerificationEnabled);
+  useEffect(() => {
+    speakerVerificationEnabledRef.current = speakerVerificationEnabled;
+    localStorage.setItem("jarvis_speaker_verification_enabled", speakerVerificationEnabled.toString());
+  }, [speakerVerificationEnabled]);
+
+  const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(() => {
+    try {
+      const stored = localStorage.getItem("jarvis_speaker_voice_profile");
+      return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const [isEnrollingVoice, setIsEnrollingVoice] = useState<boolean>(false);
+  const [enrollProgress, setEnrollProgress] = useState<number>(0);
+  const [enrollCurrentPitch, setEnrollCurrentPitch] = useState<number>(0);
+  const [enrollCurrentCentroid, setEnrollCurrentCentroid] = useState<number>(0);
+  const [lastVerificationScore, setLastVerificationScore] = useState<number | null>(null);
+  const [lastVerificationStatus, setLastVerificationStatus] = useState<"success" | "failed" | null>(null);
+
+  const activeSpeechPitchBufferRef = useRef<number[]>([]);
+  const activeSpeechCentroidBufferRef = useRef<number[]>([]);
+  const backgroundAudioStreamRef = useRef<MediaStream | null>(null);
+  const backgroundAudioIntervalRef = useRef<any>(null);
+  const backgroundAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const startBackgroundAudioAnalyzer = async () => {
+    if (!speakerVerificationEnabledRef.current || !voiceProfile) return;
+    if (backgroundAudioStreamRef.current) return; // already running
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      backgroundAudioStreamRef.current = stream;
+
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioContextClass();
+      backgroundAudioCtxRef.current = ctx;
+
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+
+      const sampleRate = ctx.sampleRate;
+      const timeBuffer = new Uint8Array(analyser.fftSize);
+      const freqBuffer = new Uint8Array(analyser.frequencyBinCount);
+
+      activeSpeechPitchBufferRef.current = [];
+      activeSpeechCentroidBufferRef.current = [];
+
+      backgroundAudioIntervalRef.current = setInterval(() => {
+        analyser.getByteTimeDomainData(timeBuffer);
+        analyser.getByteFrequencyData(freqBuffer);
+
+        const currentPitch = detectPitch(timeBuffer, sampleRate);
+        const currentCentroid = getSpectralCentroid(freqBuffer, sampleRate);
+
+        if (currentPitch > 65 && currentPitch < 700) {
+          activeSpeechPitchBufferRef.current.push(currentPitch);
+          if (activeSpeechPitchBufferRef.current.length > 40) {
+            activeSpeechPitchBufferRef.current.shift();
+          }
+        }
+        if (currentCentroid > 100) {
+          activeSpeechCentroidBufferRef.current.push(currentCentroid);
+          if (activeSpeechCentroidBufferRef.current.length > 40) {
+            activeSpeechCentroidBufferRef.current.shift();
+          }
+        }
+      }, 100);
+    } catch (e) {
+      console.warn("Could not start background audio speaker verification analyzer:", e);
+    }
+  };
+
+  const stopBackgroundAudioAnalyzer = () => {
+    if (backgroundAudioIntervalRef.current) {
+      clearInterval(backgroundAudioIntervalRef.current);
+      backgroundAudioIntervalRef.current = null;
+    }
+    if (backgroundAudioStreamRef.current) {
+      try {
+        backgroundAudioStreamRef.current.getTracks().forEach(track => track.stop());
+      } catch (e) {}
+      backgroundAudioStreamRef.current = null;
+    }
+    if (backgroundAudioCtxRef.current) {
+      try {
+        backgroundAudioCtxRef.current.close();
+      } catch (e) {}
+      backgroundAudioCtxRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (speakerVerificationEnabled && voiceProfile && status === "idle" && !isListening) {
+      startBackgroundAudioAnalyzer();
+    } else {
+      stopBackgroundAudioAnalyzer();
+    }
+    return () => {
+      stopBackgroundAudioAnalyzer();
+    };
+  }, [speakerVerificationEnabled, voiceProfile, status, isListening]);
+
+  const handleEnrollVoice = async () => {
+    setIsEnrollingVoice(true);
+    setEnrollProgress(0);
+    setEnrollCurrentPitch(0);
+    setEnrollCurrentCentroid(0);
+
+    const enrollMsg = speechLanguage === "ko-KR"
+      ? "음성 생체 서명을 등록합니다. 3초간 자비스, 내 목소리야 라고 편하게 말씀해 주세요."
+      : "Initializing speaker biometric registration. Please say 'Jarvis, it is me' naturally for three seconds.";
+    speakOutput(enrollMsg);
+    setErrorNotice(inputLanguage === "ko-KR"
+      ? "🎙️ 3초간 말씀하십시오. 음성 특징을 추출하는 중입니다..."
+      : "🎙️ Please speak for 3 seconds. Extracting voice features..."
+    );
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      const profile = await analyzeVoiceStream(stream, 3200, (data) => {
+        setEnrollProgress(data.progress);
+        if (data.currentPitch > 0) {
+          setEnrollCurrentPitch(Math.round(data.currentPitch * 10) / 10);
+        }
+        if (data.currentCentroid > 0) {
+          setEnrollCurrentCentroid(Math.round(data.currentCentroid * 10) / 10);
+        }
+      });
+
+      console.log("🎙️ [Speaker Verification] Enrollment Complete!", profile);
+
+      setVoiceProfile(profile);
+      localStorage.setItem("jarvis_speaker_voice_profile", JSON.stringify(profile));
+      setSpeakerVerificationEnabled(false); // Do not auto-enable per operator request
+
+      setIsEnrollingVoice(false);
+      speakOutput(speechLanguage === "ko-KR"
+        ? "화자 프로필 등록이 완료되었습니다."
+        : "Speaker profile registration completed."
+      );
+      setErrorNotice(inputLanguage === "ko-KR"
+        ? "✅ 화자 프로필(음성 지문) 등록 완료!"
+        : "✅ Speaker Profile Registered Successfully!"
+      );
+      
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `enroll_success_${Date.now()}`,
+          role: "jarvis",
+          text: `[SYSTEM BIOMETRIC AUDIT] Voice print profile registered. F0 Frequency: ${profile.avgPitch}Hz, Spectral Timbre Centroid: ${Math.round(profile.avgCentroid)}Hz. Speaker matching is disabled by default.`,
+          timestamp: new Date()
+        }
+      ]);
+      setDiagnosticLogs(prev => [
+        ...prev,
+        `[BIOMETRIC ENROLL] Registered speaker pitch=${profile.avgPitch}Hz centroid=${Math.round(profile.avgCentroid)}Hz`
+      ]);
+    } catch (e) {
+      console.error("Enrollment failed:", e);
+      setIsEnrollingVoice(false);
+      speakOutput(speechLanguage === "ko-KR"
+        ? "마이크 권한을 허용해 주셔야 음성 프로필 등록이 가능합니다."
+        : "You must allow microphone permission to enroll your voice profile."
+      );
+      setErrorNotice(inputLanguage === "ko-KR"
+        ? "❌ 등록 실패: 마이크 접근 에러"
+        : "❌ Enrollment Failed: Microphone Access Error"
+      );
+    }
+  };
 
   const isListeningRef = useRef(isListening);
   useEffect(() => {
@@ -833,6 +1030,7 @@ export default function App() {
 
     let wakeRecognition: any = null;
     let active = true;
+    let wakeDebounceTimeout: any = null;
 
     function startWakeWordDetector() {
       if (!active) return;
@@ -850,31 +1048,131 @@ export default function App() {
 
       recognition.onresult = (event: any) => {
         if (!active) return;
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        
+        let fullTranscript = "";
+        let isFinalResult = false;
+        
+        for (let i = 0; i < event.results.length; ++i) {
           const rawTranscript = event.results[i][0].transcript;
-          const transcript = rawTranscript.toLowerCase().trim();
-          const cleanTranscript = transcript.replace(/\s+/g, ""); // Remove spaces for super high sensitivity
-          console.log(`[Always-Listening Continuous Buffer]: "${transcript}" (clean: "${cleanTranscript}")`);
-
-          const wakeWords = [
-            "자비스", "자비쓰", "잡이스", "하비수", "사비스", "차비스", "타비스", "자비수", 
-            "쟈비스", "자비서", "접이스", "바이스", "자빗", "차비소", "야자비스", "자비", 
-            "서비스", "서비수", "디바이스", "지바이스", "비서", "다비스", "좌비스", "쟙이스", 
-            "쟙스", "잡스", "재비스", "제비스", "자비스야", "하비스", "자베스",
-            "jarvis", "travis", "javis", "jarves", "jarv", "jervis", "garvis", "arvis", "charvis"
-          ];
-          
-          let matchedWord = "";
-          for (const word of wakeWords) {
-            if (cleanTranscript.includes(word)) {
-              matchedWord = word;
-              break;
-            }
+          if (rawTranscript) {
+            fullTranscript += (fullTranscript ? " " : "") + rawTranscript;
           }
+          if (event.results[i].isFinal) {
+            isFinalResult = true;
+          }
+        }
+        
+        const transcript = fullTranscript.toLowerCase().trim();
+        if (!transcript) return;
+        
+        const cleanTranscript = transcript.replace(/\s+/g, "");
+        console.log(`[Always-Listening Continuous Buffer]: "${transcript}" (clean: "${cleanTranscript}", final: ${isFinalResult})`);
 
-          if (matchedWord) {
-            console.log(`✨ [WAKE WORD MATCHED via "${matchedWord}"!]`);
-            setContinuousVoiceMode(true); // Activate persistent continuous convo mode
+        const wakeWords = [
+          "자비스", "자비쓰", "잡이스", "하비수", "사비스", "차비스", "타비스", "자비수", 
+          "쟈비스", "자비서", "접이스", "바이스", "자빗", "차비소", "야자비스", "자비", 
+          "서비스", "서비수", "디바이스", "지바이스", "비서", "다비스", "좌비스", "쟙이스", 
+          "쟙스", "잡스", "재비스", "제비스", "자비스야", "하비스", "자베스",
+          "jarvis", "travis", "javis", "jarves", "jarv", "jervis", "garvis", "arvis", "charvis"
+        ];
+        
+        let matchedWord = "";
+        for (const word of wakeWords) {
+          if (cleanTranscript.includes(word)) {
+            matchedWord = word;
+            break;
+          }
+        }
+
+        if (matchedWord) {
+          console.log(`✨ [WAKE WORD MATCHED via "${matchedWord}" in "${transcript}"]`);
+          
+          if (wakeDebounceTimeout) {
+            clearTimeout(wakeDebounceTimeout);
+          }
+          
+          const triggerWakeAction = (finalTranscriptText: string) => {
+            if (!active) return;
+
+            // ─── SPEAKER BIOMETRIC VERIFICATION FOR WAKE-WORD DETECTOR ───
+            if (speakerVerificationEnabledRef.current && voiceProfile) {
+              const pitches = activeSpeechPitchBufferRef.current;
+              const centroids = activeSpeechCentroidBufferRef.current;
+              
+              const avgCurrentPitch = pitches.length > 0 
+                ? pitches.reduce((sum, p) => sum + p, 0) / pitches.length 
+                : 0;
+              const avgCurrentCentroid = centroids.length > 0 
+                ? centroids.reduce((sum, c) => sum + c, 0) / centroids.length 
+                : 0;
+
+              const matchScore = calculateVoiceSimilarity(
+                { pitch: avgCurrentPitch, centroid: avgCurrentCentroid },
+                voiceProfile
+              );
+
+              console.log(`🎙️ [Speaker Verification on Wake] Pitch: ${avgCurrentPitch}Hz, Centroid: ${avgCurrentCentroid}Hz, Match Score: ${matchScore}%`);
+              setLastVerificationScore(matchScore);
+
+              if (matchScore < 70) {
+                setLastVerificationStatus("failed");
+                const failMsg = speechLanguage === "ko-KR"
+                  ? "경고: 인증되지 않은 사용자의 음성 서명입니다. 접근 권한이 제한되었습니다."
+                  : "Security Violation: Unauthorized speaker voice signature. Core access blocked.";
+                
+                speakOutput(failMsg);
+                setErrorNotice(inputLanguage === "ko-KR"
+                  ? "❌ 경고: 미등록 목소리 접근 차단"
+                  : "❌ Alert: Unauthorized Speaker Signature"
+                );
+                
+                setMessages(prev => [
+                  ...prev,
+                  {
+                    id: `wake_failed_${Date.now()}`,
+                    role: "jarvis",
+                    text: `[BIOMETRIC INTRUSION ALERT] Unregistered voice signature attempted to trigger wake word. Security block engaged. Confidence score: ${matchScore}%.`,
+                    timestamp: new Date()
+                  }
+                ]);
+                setDiagnosticLogs(prev => [
+                  ...prev,
+                  `[BIOMETRIC SECURITY BLOCKED] Wake blocked score=${matchScore}% pitch=${Math.round(avgCurrentPitch)} centroid=${Math.round(avgCurrentCentroid)}`
+                ]);
+
+                // Reset buffers and stop recognition so it restarts cleanly
+                activeSpeechPitchBufferRef.current = [];
+                activeSpeechCentroidBufferRef.current = [];
+                
+                active = false;
+                try { recognition.stop(); } catch (e) {}
+                return;
+              } else {
+                setLastVerificationStatus("success");
+              }
+            }
+
+            active = false;
+            try { recognition.stop(); } catch (e) {}
+            
+            // Extract the part after the wake word
+            const regexStr = matchedWord.split("").map(char => {
+              return char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\s*";
+            }).join("");
+            const regex = new RegExp(regexStr, "i");
+            const match = finalTranscriptText.match(regex);
+            
+            let afterWord = "";
+            if (match) {
+              const matchedSegmentOnTranscript = match[0];
+              const index = finalTranscriptText.indexOf(matchedSegmentOnTranscript);
+              afterWord = finalTranscriptText.substring(index + matchedSegmentOnTranscript.length).trim();
+            } else {
+              const index = finalTranscriptText.indexOf(matchedWord);
+              if (index !== -1) {
+                afterWord = finalTranscriptText.substring(index + matchedWord.length).trim();
+              }
+            }
             
             // 1. If screen is asleep, restore it!
             if (isScreenSleep) {
@@ -882,51 +1180,45 @@ export default function App() {
               const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
               speakOutput(`Yes ${userHonorific}, J.A.R.V.I.S. protocol is active. Core systems are fully online and ready.`);
               setErrorNotice("🎙️ Wake word detected: Screen restored in online mode. Continuous dialog loop engaged.");
-              active = false;
-              try { recognition.stop(); } catch (e) {}
-              break;
+              return;
             }
-
-            // 2. If screen is already awake, let's extract the command or trigger active listening
-            // Build space-insensitive regex to capture the exact matched part of raw transcript
-            const regexStr = matchedWord.split("").map(char => {
-              return char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\s*";
-            }).join("");
-            const regex = new RegExp(regexStr, "i");
-            const match = transcript.match(regex);
-            
-            let afterWord = "";
-            if (match) {
-              const matchedSegmentOnTranscript = match[0];
-              const index = transcript.indexOf(matchedSegmentOnTranscript);
-              afterWord = transcript.substring(index + matchedSegmentOnTranscript.length).trim();
-            } else {
-              // Fallback
-              const index = transcript.indexOf(matchedWord);
-              if (index !== -1) {
-                afterWord = transcript.substring(index + matchedWord.length).trim();
-              }
-            }
-
-            active = false;
-            try { recognition.stop(); } catch (e) {}
 
             if (afterWord.length > 1) {
               // They said Jarvis + the command right away!
               console.log(`[Jarvis Continuous] Executing direct inline command: "${afterWord}"`);
+              if (bypassWakeWord) {
+                setContinuousVoiceMode(true);
+              } else {
+                setContinuousVoiceMode(false);
+                voiceTriggeredActiveListeningRef.current = false;
+              }
               handleSubmitPrompt(afterWord);
             } else {
               // They just said "자비스".
               console.log("[Jarvis Continuous] Wake word heard with no command. Triggering speech capture feedback loop.");
+              if (bypassWakeWord) {
+                setContinuousVoiceMode(true);
+              } else {
+                setContinuousVoiceMode(false);
+                voiceTriggeredActiveListeningRef.current = true;
+              }
+              
               const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-              const alertMsg = `At your service, ${userHonorific}. Go ahead.`;
+              const alertMsg = speechLanguage === "ko-KR"
+                ? (userGender === "female" ? "예 의원님, 말씀하십시오." : "예 주인님, 말씀하십시오.")
+                : `At your service, ${userHonorific}. Go ahead.`;
               speakOutput(alertMsg);
               setErrorNotice(inputLanguage === "ko-KR"
                 ? `🎙️ 자비스: 예 주인님, 말씀하십시오.`
                 : `🎙️ JARVIS: Yes, ${userHonorific}. Continuous voice interceptor is active.`);
             }
-            break;
-          }
+          };
+
+          // Use a shorter delay if we have a final result, or a longer one if interim to avoid cutoffs
+          const delay = isFinalResult ? 300 : 1500;
+          wakeDebounceTimeout = setTimeout(() => {
+            triggerWakeAction(transcript);
+          }, delay);
         }
       };
 
@@ -967,6 +1259,9 @@ export default function App() {
 
     return () => {
       active = false;
+      if (wakeDebounceTimeout) {
+        clearTimeout(wakeDebounceTimeout);
+      }
       if (wakeRecognition) {
         try {
           wakeRecognition.stop();
@@ -1114,13 +1409,19 @@ export default function App() {
             try {
               recognition.stop();
             } catch (e) {}
-            handleSubmitPrompt(sttTranscriptRef.current.trim());
+            handleSubmitPrompt(sttTranscriptRef.current.trim(), true);
           }
         }, 2000);
       }
     };
 
     recognition.onerror = (event: any) => {
+      if (event.error === "aborted") {
+        console.log("STT sequence was aborted normally.");
+        setIsListening(false);
+        setStatus("idle");
+        return;
+      }
       if (event.error === "no-speech") {
         console.warn("STT sequence timeout: no-speech");
       } else {
@@ -1143,7 +1444,7 @@ export default function App() {
           hasSubmittedRef.current = true;
           setIsListening(false);
           setTransitText("");
-          handleSubmitPrompt(finalClean);
+          handleSubmitPrompt(finalClean, true);
         } else {
           setIsListening(false);
           if (statusRef.current === "listening") {
@@ -1177,10 +1478,12 @@ export default function App() {
 
   const handleSpeechFinished = () => {
     setStatus("idle");
-    if (continuousVoiceModeRef.current) {
-      console.log("[Jarvis Continuous Convo] Conversation active. Re-triggering microphone...");
+    const shouldStartMic = continuousVoiceModeRef.current || voiceTriggeredActiveListeningRef.current;
+    if (shouldStartMic) {
+      console.log("[Jarvis Continuous Convo] Active voice trigger found. Re-triggering microphone...");
       setTimeout(() => {
-        if (continuousVoiceModeRef.current && statusRef.current === "idle" && !isListeningRef.current) {
+        const stillShouldStart = continuousVoiceModeRef.current || voiceTriggeredActiveListeningRef.current;
+        if (stillShouldStart && statusRef.current === "idle" && !isListeningRef.current) {
           startVoiceInputExplicit();
         }
       }, 400); // 400ms pause so there is a natural rhythm and no microphone chime clipping
@@ -1235,6 +1538,21 @@ export default function App() {
         textToRead = `3D CAD 모드를 종료합니다, ${honorificKo}. 메인 보조 프로세서를 로드하는 중입니다.`;
       } else if (lowerText.includes("systems online, sir")) {
         textToRead = `시스템이 온라인되었습니다, ${honorificKo}.`;
+      }
+    } else {
+      // If speechLanguage is NOT ko-KR (i.e. we are in strict English speech mode),
+      // make sure we don't read out any accidental Korean characters.
+      const containsKo = /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\uffa0-\uffdf]/.test(textToRead);
+      if (containsKo) {
+        const rawCleaned = textToRead.replace(/[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\uffa0-\uffdf]/g, "").trim();
+        const doubleSpaceCleaned = rawCleaned.replace(/\s+/g, " ").trim();
+        
+        if (doubleSpaceCleaned.length > 5) {
+          textToRead = doubleSpaceCleaned;
+        } else {
+          const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+          textToRead = `Understood, ${userHonorific}. I am projecting the requested details on the central console display now.`;
+        }
       }
     }
 
@@ -1758,8 +2076,68 @@ export default function App() {
   };
 
   // Submit absolute prompt to Backend Chat API or process local commands
-  const handleSubmitPrompt = async (text: string) => {
+  const handleSubmitPrompt = async (text: string, isVoiceTrigger: boolean = false) => {
     if (!text.trim()) return;
+
+    // ─── VOICE BIOMETRIC VERIFICATION FOR SUBMITTED PROMPTS ───
+    if (isVoiceTrigger && speakerVerificationEnabledRef.current && voiceProfile) {
+      const pitches = activeSpeechPitchBufferRef.current;
+      const centroids = activeSpeechCentroidBufferRef.current;
+      
+      const avgCurrentPitch = pitches.length > 0 
+        ? pitches.reduce((sum, p) => sum + p, 0) / pitches.length 
+        : 0;
+      const avgCurrentCentroid = centroids.length > 0 
+        ? centroids.reduce((sum, c) => sum + c, 0) / centroids.length 
+        : 0;
+
+      const matchScore = calculateVoiceSimilarity(
+        { pitch: avgCurrentPitch, centroid: avgCurrentCentroid },
+        voiceProfile
+      );
+
+      console.log(`🎙️ [Speaker Verification on Command] Pitch: ${avgCurrentPitch}Hz, Centroid: ${avgCurrentCentroid}Hz, Match Score: ${matchScore}%`);
+      setLastVerificationScore(matchScore);
+
+      if (matchScore < 70) {
+        setLastVerificationStatus("failed");
+        const failMsg = speechLanguage === "ko-KR"
+          ? "접근이 차단되었습니다. 일치하지 않는 음성 서명입니다."
+          : "Access denied. Voice print mismatch signature detected.";
+        
+        speakOutput(failMsg);
+        setErrorNotice(inputLanguage === "ko-KR"
+          ? "❌ 경고: 화자 식별 실패 (접근 거부)"
+          : "❌ Warning: Voice Print Mismatch"
+        );
+        
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `command_failed_${Date.now()}`,
+            role: "jarvis",
+            text: `[BIOMETRIC BLOCKED] Speaker signature mismatch. Voice command blocked for protection. Confidence score: ${matchScore}%.`,
+            timestamp: new Date()
+          }
+        ]);
+        setDiagnosticLogs(prev => [
+          ...prev,
+          `[BIOMETRIC BLOCKED] Command blocked score=${matchScore}% pitch=${Math.round(avgCurrentPitch)} centroid=${Math.round(avgCurrentCentroid)}`
+        ]);
+
+        // Clear active buffers so they don't linger
+        activeSpeechPitchBufferRef.current = [];
+        activeSpeechCentroidBufferRef.current = [];
+        return; // Reject!
+      } else {
+        setLastVerificationStatus("success");
+      }
+    }
+
+    if (!bypassWakeWordRef.current) {
+      voiceTriggeredActiveListeningRef.current = false;
+      setContinuousVoiceMode(false);
+    }
 
     let activeUserName = userName;
 
@@ -3121,13 +3499,19 @@ I can still map schedules, process identity registries, and synthesize local mic
             try {
               recognition.stop();
             } catch (e) {}
-            handleSubmitPrompt(sttTranscriptRef.current.trim());
+            handleSubmitPrompt(sttTranscriptRef.current.trim(), true);
           }
         }, 2000);
       }
     };
 
     recognition.onerror = (event: any) => {
+      if (event.error === "aborted") {
+        console.log("STT sequence was aborted normally.");
+        setIsListening(false);
+        setStatus("idle");
+        return;
+      }
       if (event.error === "no-speech") {
         console.warn("STT sequence timeout: no-speech");
         setErrorNotice("No speech detected. Please speak clearly.");
@@ -3155,7 +3539,7 @@ I can still map schedules, process identity registries, and synthesize local mic
           hasSubmittedRef.current = true;
           setIsListening(false);
           setTransitText("");
-          handleSubmitPrompt(finalClean);
+          handleSubmitPrompt(finalClean, true);
         } else {
           setIsListening(false);
           if (status === "listening") {
@@ -4117,8 +4501,20 @@ I can still map schedules, process identity registries, and synthesize local mic
                           animate={{ opacity: 0.65 }}
                           className="flex flex-col items-center text-center space-y-1.5 text-cyan-500/40 select-none"
                         >
-                          <Cpu className="w-5 h-5 stroke-[1.2] animate-pulse" />
-                          <span className="text-[7px] font-mono tracking-[0.2em] uppercase">SYSTEM STANDBY</span>
+                          {alwaysListeningEn && !bypassWakeWord ? (
+                            <div className="flex flex-col items-center space-y-1.5">
+                              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-950/40 border border-cyan-500/20 text-[8px] font-mono text-cyan-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
+                                <span>ALWAYS VOICE LISTENING ACTIVE</span>
+                              </div>
+                              <span className="text-[7px] font-mono tracking-[0.2em] uppercase text-cyan-400/60">"자비스 호출 대기 중..."</span>
+                            </div>
+                          ) : (
+                            <>
+                              <Cpu className="w-5 h-5 stroke-[1.2] animate-pulse" />
+                              <span className="text-[7px] font-mono tracking-[0.2em] uppercase">SYSTEM STANDBY</span>
+                            </>
+                          )}
                           <p className="text-[9px] font-sans text-cyan-500/50">"Say '자비스' or tap TRANSMIT button to begin, Sir."</p>
                         </motion.div>
                       )}
@@ -4628,6 +5024,122 @@ I can still map schedules, process identity registries, and synthesize local mic
                       <p className="text-[9px] text-slate-400 leading-normal font-mono">
                         <strong>BYPASS ACTIVE (호출어 생략)</strong> 설정 시, "자비스"라고 부르지 않고 편소처럼 편하게 말씀하셔도 마이크가 기기상에서 상시 수신되어 질문을 즉각 가공 처리합니다!
                       </p>
+                    </div>
+
+                    {/* Speaker Verification (내 목소리 전용 보안 매칭) */}
+                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                      <div className="flex justify-between items-center">
+                        <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
+                          <span className="bg-cyan-500 animate-pulse w-1.5 h-1.5 rounded-full" />
+                          SPEAKER MATCHING (내 목소리 전용 반응):
+                        </label>
+                        <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!voiceProfile) {
+                                setErrorNotice("먼저 아래 '음성 지문 등록'을 완료해 주세요.");
+                                return;
+                              }
+                              setSpeakerVerificationEnabled(true);
+                              const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                              speakOutput(`Speaker biometric verification activated, ${userHonorific}. System now locked to your voice print.`);
+                            }}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              speakerVerificationEnabled
+                                ? "bg-cyan-500/20 text-cyan-300 border-r border-slate-800"
+                                : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
+                            }`}
+                          >
+                            ON
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSpeakerVerificationEnabled(false);
+                              const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+                              speakOutput(`Speaker biometric verification suspended, ${userHonorific}. System is now open to public speech commands.`);
+                            }}
+                            className={`px-2 py-0.5 font-bold transition-all ${
+                              !speakerVerificationEnabled
+                                ? "bg-rose-950/40 text-rose-300"
+                                : "bg-transparent text-slate-500 hover:text-slate-400"
+                            }`}
+                          >
+                            OFF
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-400 leading-normal font-mono">
+                        활성화 시, 등록된 주인님의 고유 음성 주파수와 음색(Spectral Timbre)이 일치할 때만 자비스가 반응하고 지시를 수행합니다!
+                      </p>
+
+                      <div className="mt-2 p-2.5 bg-slate-950/60 rounded border border-slate-800/80 space-y-2 shadow-[0_0_15px_rgba(6,182,212,0.02)]">
+                        <div className="flex justify-between items-center text-[9px] font-mono">
+                          <span className="text-slate-500">BIOMETRIC PROFILE:</span>
+                          {voiceProfile ? (
+                            <span className="text-emerald-400 font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              REGISTERED ({voiceProfile.avgPitch}Hz)
+                            </span>
+                          ) : (
+                            <span className="text-rose-400 font-bold uppercase font-mono">UNREGISTERED</span>
+                          )}
+                        </div>
+
+                        {voiceProfile && (
+                          <div className="grid grid-cols-2 gap-1.5 text-[8.5px] font-mono text-slate-400 bg-slate-900/30 p-1.5 rounded border border-cyan-500/5">
+                            <div className="border-r border-slate-800/50 pr-1.5">
+                              <span className="text-slate-500 block text-[7.5px] uppercase">Registered Pitch</span>
+                              <span className="text-cyan-300 font-semibold">{voiceProfile.avgPitch} Hz</span>
+                            </div>
+                            <div className="pl-0.5">
+                              <span className="text-slate-500 block text-[7.5px] uppercase">Timbre Centroid</span>
+                              <span className="text-cyan-300 font-semibold">{Math.round(voiceProfile.avgCentroid)} Hz</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {isEnrollingVoice ? (
+                          <div className="space-y-1.5 bg-cyan-950/10 p-2 rounded border border-cyan-500/20 animate-pulse">
+                            <div className="flex justify-between text-[9px] font-mono text-cyan-400 font-bold">
+                              <span>🗣️ ANALYZING VOICE SIGNATURE...</span>
+                              <span>{enrollProgress}%</span>
+                            </div>
+                            <div className="w-full h-1 bg-slate-900 rounded overflow-hidden">
+                              <div 
+                                className="h-full bg-cyan-500 transition-all duration-100" 
+                                style={{ width: `${enrollProgress}%` }}
+                              />
+                            </div>
+                            <div className="flex justify-between text-[8px] font-mono text-slate-500">
+                              <span>PITCH: {enrollCurrentPitch > 0 ? `${enrollCurrentPitch}Hz` : "Reading..."}</span>
+                              <span>TIMBRE: {enrollCurrentCentroid > 0 ? `${Math.round(enrollCurrentCentroid)}Hz` : "Reading..."}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleEnrollVoice}
+                            className="w-full py-1.5 bg-cyan-950/30 hover:bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:text-cyan-100 rounded text-[9px] font-bold font-mono transition-all text-center uppercase tracking-wider cursor-pointer"
+                          >
+                            {voiceProfile ? "Re-Enroll Voice Profile (음성 지문 재등록)" : "Enroll Voice Profile (음성 지문 등록)"}
+                          </button>
+                        )}
+
+                        {lastVerificationScore !== null && (
+                          <div className="flex justify-between items-center text-[9px] font-mono border-t border-slate-900/60 pt-1.5 mt-1.5">
+                            <span className="text-slate-500">LAST MATCH COMPLIANCE:</span>
+                            <span className={`font-bold px-1.5 py-0.5 rounded text-[8.5px] ${
+                              lastVerificationStatus === "success" 
+                                ? "text-emerald-400 bg-emerald-500/5 border border-emerald-500/10" 
+                                : "text-rose-400 bg-rose-500/5 border border-rose-500/10"
+                            }`}>
+                              {lastVerificationScore}% ({lastVerificationStatus === "success" ? "VERIFIED" : "BLOCKED"})
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {/* Korean-English Translation engine control */}
