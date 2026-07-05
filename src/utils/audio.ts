@@ -117,131 +117,105 @@ export function speakWithBrowser(
   // Cancel any running speech
   window.speechSynthesis.cancel();
 
-  const isEnglishForced = options.lang === "en-GB" || options.lang === "en-US";
-  const containsKorean = isEnglishForced ? false : /[\uac00-\ud7af]/.test(text);
+  // Completely disable Korean vocal speech synthesis as requested
+  const containsKorean = false;
 
   let textToSpeak = text;
-  if (containsKorean) {
-    const mappings: [RegExp, string][] = [
-      [/\bMr\b\.?/gi, "미스터"],
-      [/\bMs\b\.?/gi, "미즈"],
-      [/\bSir\b/gi, "주인님"],
-      [/\bMa'am\b/gi, "주인님"],
-      [/\bStark\b/gi, "스타크"],
-      [/\bTony\b/gi, "토니"],
-      [/\bJARVIS\b/gi, "자비스"],
-      [/\bJ\.A\.R\.V\.I\.S\.\b/gi, "자비스"],
-      [/\bWelcome home\b/gi, "웰컴 홈"],
-      [/\bHologram\b/gi, "홀로그램"],
-      [/\bSimulation\b/gi, "시뮬레이션"],
-      [/\bSimulate\b/gi, "시뮬레이션"],
-      [/\bYes\b/gi, "예스"],
-      [/\bOk\b/gi, "오케이"],
-      [/\bOK\b/gi, "오케이"],
-      [/\bActive\b/gi, "액티브"],
-      [/\bOnline\b/gi, "온라인"],
-      [/\bOffline\b/gi, "오프라인"],
-      [/\bCore\b/gi, "코어"],
-      [/\bLoop\b/gi, "루프"],
-      [/\bBack in Black\b/gi, "백 인 블랙"],
-      [/\bAC\/DC\b/gi, "에이씨디씨"],
-      [/\bACDC\b/gi, "에이씨디씨"]
-    ];
-    for (const [regex, replacement] of mappings) {
-      textToSpeak = textToSpeak.replace(regex, replacement);
-    }
-  }
 
   const utterance = new SpeechSynthesisUtterance(textToSpeak);
-  utterance.lang = containsKorean ? "ko-KR" : (options.lang || "en-GB");
+  utterance.lang = (options.lang && options.lang !== "ko-KR") ? options.lang : "en-GB";
 
   // Attempt to select a suitable voice
   const voices = window.speechSynthesis.getVoices();
   let selectedVoice = null;
+  let isManuallySelected = false;
 
-  if (!containsKorean) {
-    // Lock strictly to English UK Male voice
-    const gbVoices = voices.filter(v => {
-      const langLower = v.lang.toLowerCase().replace('_', '-');
-      return langLower.startsWith('en-gb') || langLower.startsWith('en-uk');
-    });
-    
-    // 1. Look for explicit "male" inside en-GB voices
-    selectedVoice = gbVoices.find(v => v.name.toLowerCase().includes("male"));
-    
-    // 2. Look for known UK male names
-    if (!selectedVoice) {
-      const ukMaleNames = ["george", "daniel", "arthur", "oliver", "thomas", "ryan", "harry"];
-      for (const name of ukMaleNames) {
-        selectedVoice = gbVoices.find(v => v.name.toLowerCase().includes(name));
-        if (selectedVoice) break;
-      }
+  // 1. First priority: Check if a specific voice has been manually requested/selected.
+  // We respect the user's manual choice directly, regardless of language filters.
+  if (options.voiceName) {
+    const candidateVoice = voices.find((v) => v.name === options.voiceName);
+    if (candidateVoice) {
+      selectedVoice = candidateVoice;
+      isManuallySelected = true;
     }
-    
-    // 3. Look for "uk" or "united kingdom" or "great britain" and "male" in any English voice
-    if (!selectedVoice) {
-      const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
-      selectedVoice = allEnVoices.find(v => {
-        const nameLower = v.name.toLowerCase();
-        return (nameLower.includes("uk") || nameLower.includes("united kingdom") || nameLower.includes("great britain") || nameLower.includes("gb")) && nameLower.includes("male");
-      });
-    }
+  }
 
-    // 4. Look for ANY English Male voice (including en-US, en-AU, etc.) with explicit "male" keyword or known male names
-    if (!selectedVoice) {
-      const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
-      selectedVoice = allEnVoices.find(v => {
-        const nameLower = v.name.toLowerCase();
-        return nameLower.includes("male") || 
-               nameLower.includes("daniel") || 
-               nameLower.includes("george") || 
-               nameLower.includes("oliver") || 
-               nameLower.includes("david") || 
-               nameLower.includes("alex") || 
-               nameLower.includes("fred") || 
-               nameLower.includes("tom") || 
-               nameLower.includes("james");
+  // 2. Second priority: If no manual voice was selected or it wasn't found in current browser context,
+  // we do intelligent language auto-detection and fallbacks.
+  if (!selectedVoice) {
+    if (!containsKorean) {
+      // Lock strictly to English UK Male voice
+      const gbVoices = voices.filter(v => {
+        const langLower = v.lang.toLowerCase().replace('_', '-');
+        return langLower.startsWith('en-gb') || langLower.startsWith('en-uk');
       });
-    }
-
-    // 5. Any en-GB voice that is NOT obviously female
-    if (!selectedVoice && gbVoices.length > 0) {
-      selectedVoice = gbVoices.find(v => {
-        const nameLower = v.name.toLowerCase();
-        const femaleNames = ["female", "hazel", "susan", "zira", "stephanie", "serena", "kate", "fiona", "moira", "veena", "tessa", "samantha", "karen", "victoria", "heather", "siri"];
-        return !femaleNames.some(femaleName => nameLower.includes(femaleName));
-      });
+      
+      // 1. Look for explicit "male" inside en-GB voices
+      selectedVoice = gbVoices.find(v => v.name.toLowerCase().includes("male"));
+      
+      // 2. Look for known UK male names
       if (!selectedVoice) {
-        selectedVoice = gbVoices[0];
+        const ukMaleNames = ["george", "daniel", "arthur", "oliver", "thomas", "ryan", "harry"];
+        for (const name of ukMaleNames) {
+          selectedVoice = gbVoices.find(v => v.name.toLowerCase().includes(name));
+          if (selectedVoice) break;
+        }
       }
-    }
-
-    // 6. Any general English voice that is NOT obviously female
-    if (!selectedVoice) {
-      const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
-      selectedVoice = allEnVoices.find(v => {
-        const nameLower = v.name.toLowerCase();
-        const femaleNames = ["female", "hazel", "susan", "zira", "stephanie", "serena", "kate", "fiona", "moira", "veena", "tessa", "samantha", "karen", "victoria", "heather", "siri"];
-        return !femaleNames.some(femaleName => nameLower.includes(femaleName));
-      });
-    }
-
-    // 7. Last resort: Any English voice
-    if (!selectedVoice) {
-      selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith('en'));
-    }
-  } else {
-    // If it is Korean, try to use selected voice or fall back to Korean male voice
-    if (options.voiceName) {
-      const candidateVoice = voices.find((v) => v.name === options.voiceName);
-      if (candidateVoice) {
-        selectedVoice = candidateVoice;
+      
+      // 3. Look for "uk" or "united kingdom" or "great britain" and "male" in any English voice
+      if (!selectedVoice) {
+        const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
+        selectedVoice = allEnVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          return (nameLower.includes("uk") || nameLower.includes("united kingdom") || nameLower.includes("great britain") || nameLower.includes("gb")) && nameLower.includes("male");
+        });
       }
-    }
 
-    // Fallback to auto-detection if no specific voice selected or found
-    if (!selectedVoice) {
-      const koreanVoices = voices.filter((v) => v.lang.startsWith("ko"));
+      // 4. Look for ANY English Male voice (including en-US, en-AU, etc.) with explicit "male" keyword or known male names
+      if (!selectedVoice) {
+        const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
+        selectedVoice = allEnVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          return nameLower.includes("male") || 
+                 nameLower.includes("daniel") || 
+                 nameLower.includes("george") || 
+                 nameLower.includes("oliver") || 
+                 nameLower.includes("david") || 
+                 nameLower.includes("alex") || 
+                 nameLower.includes("fred") || 
+                 nameLower.includes("tom") || 
+                 nameLower.includes("james");
+        });
+      }
+
+      // 5. Any en-GB voice that is NOT obviously female
+      if (!selectedVoice && gbVoices.length > 0) {
+        selectedVoice = gbVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          const femaleNames = ["female", "hazel", "susan", "zira", "stephanie", "serena", "kate", "fiona", "moira", "veena", "tessa", "samantha", "karen", "victoria", "heather", "siri"];
+          return !femaleNames.some(femaleName => nameLower.includes(femaleName));
+        });
+        if (!selectedVoice) {
+          selectedVoice = gbVoices[0];
+        }
+      }
+
+      // 6. Any general English voice that is NOT obviously female
+      if (!selectedVoice) {
+        const allEnVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
+        selectedVoice = allEnVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          const femaleNames = ["female", "hazel", "susan", "zira", "stephanie", "serena", "kate", "fiona", "moira", "veena", "tessa", "samantha", "karen", "victoria", "heather", "siri"];
+          return !femaleNames.some(femaleName => nameLower.includes(femaleName));
+        });
+      }
+
+      // 7. Last resort: Any English voice
+      if (!selectedVoice) {
+        selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith('en'));
+      }
+    } else {
+      const koreanVoices = voices.filter((v) => v.lang.toLowerCase().startsWith("ko"));
       // Try to find a male voice first with an extensive keyword list
       selectedVoice = koreanVoices.find((v) => {
         const nameLower = v.name.toLowerCase();
@@ -264,6 +238,11 @@ export function speakWithBrowser(
           nameLower.includes("taehoon") ||
           nameLower.includes("min-ho") ||
           nameLower.includes("minho") ||
+          nameLower.includes("chul-soo") ||
+          nameLower.includes("chulsoo") ||
+          nameLower.includes("철수") ||
+          (nameLower.includes("han") && !nameLower.includes("hangul") && !nameLower.includes("hangeul") && !nameLower.includes("hannah")) ||
+          (nameLower.includes("한") && !nameLower.includes("한국어") && !nameLower.includes("대한민국")) ||
           nameLower.includes("ism-local") ||
           nameLower.includes("ism-network") ||
           nameLower.includes("kdf-local") ||
@@ -334,6 +313,11 @@ export function speakWithBrowser(
     activeVoiceName.includes("taehoon") ||
     activeVoiceName.includes("min-ho") ||
     activeVoiceName.includes("minho") ||
+    activeVoiceName.includes("chul-soo") ||
+    activeVoiceName.includes("chulsoo") ||
+    activeVoiceName.includes("철수") ||
+    (activeVoiceName.includes("han") && !activeVoiceName.includes("hangul") && !activeVoiceName.includes("hangeul") && !activeVoiceName.includes("hannah")) ||
+    (activeVoiceName.includes("한") && !activeVoiceName.includes("한국어") && !activeVoiceName.includes("대한민국")) ||
     activeVoiceName.includes("ism-local") ||
     activeVoiceName.includes("ism-network") ||
     activeVoiceName.includes("kdf-local") ||
@@ -342,24 +326,44 @@ export function speakWithBrowser(
     activeVoiceName.includes("david") ||
     activeVoiceName.includes("puck") ||
     activeVoiceName.includes("charon") ||
-    activeVoiceName.includes("daniel");
+    activeVoiceName.includes("daniel") ||
+    (activeVoiceName.includes("siri") && (
+      activeVoiceName.includes("남자") || 
+      activeVoiceName.includes("male") || 
+      activeVoiceName.includes("2") || 
+      activeVoiceName.includes("3") || 
+      activeVoiceName.includes("4")
+    ));
 
-  if (containsKorean) {
-    if (isMaleVoice) {
-      utterance.pitch = 0.82; // Dignified, polite Korean male baritone
-      utterance.rate = 0.94;
-    } else {
-      utterance.pitch = 1.0; // Natural pitch if fallback voice is female (prevents creepy distorted sound)
-      utterance.rate = 0.98;
-    }
+  if (isManuallySelected) {
+    // For manually chosen voices, respect the exact slider pitch and rate directly!
+    utterance.pitch = options.pitch ?? 1.0;
+    utterance.rate = options.rate ?? 1.0;
   } else {
-    if (isMaleVoice) {
-      const basePitch = options.pitch ?? 0.88;
-      utterance.pitch = basePitch;
-      utterance.rate = options.rate ?? 0.95; // Elegant J.A.R.V.I.S. cadence
+    // Apply automatic J.A.R.V.I.S. voice tuning/simulation only for auto-detected fallbacks
+    if (containsKorean) {
+      if (isMaleVoice) {
+        utterance.pitch = options.pitch ?? 0.85; // Dignified, polite Korean male baritone
+        utterance.rate = options.rate ?? 0.94;
+      } else {
+        // If the auto-detected fallback voice is female, we shift the pitch down to simulate a deep male baritone
+        const basePitch = options.pitch ?? 0.85;
+        if (basePitch <= 0.5) {
+          utterance.pitch = Math.max(0.3, basePitch);
+        } else {
+          utterance.pitch = Math.max(0.35, Math.min(0.60, basePitch - 0.35)); 
+        }
+        utterance.rate = options.rate ?? 0.88; // Slower pace for deeper resonance
+      }
     } else {
-      utterance.pitch = 1.0; // Natural pitch for standard non-male fallback
-      utterance.rate = options.rate ?? 0.98;
+      if (isMaleVoice) {
+        const basePitch = options.pitch ?? 0.88;
+        utterance.pitch = basePitch;
+        utterance.rate = options.rate ?? 0.95; // Elegant J.A.R.V.I.S. cadence
+      } else {
+        utterance.pitch = 1.0; // Natural pitch for standard non-male fallback
+        utterance.rate = options.rate ?? 0.98;
+      }
     }
   }
 
