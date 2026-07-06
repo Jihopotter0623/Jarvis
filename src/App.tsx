@@ -2470,12 +2470,108 @@ export default function App() {
       return;
     }
 
+    const isUpgradeToInjun = 
+      cleanNoSpaces.includes("인준으로업그레이드") || 
+      cleanNoSpaces.includes("인준업그레이드") || 
+      cleanNoSpaces.includes("인준목소리") || 
+      cleanNoSpaces.includes("인준으로설정") || 
+      cleanNoSpaces.includes("인준으로변경") || 
+      cleanNoSpaces.includes("인준으로바꿔") || 
+      cleanNoSpaces.includes("인준") || 
+      cleanNoSpaces.includes("upgradetoinjun");
+
+    if (isUpgradeToInjun) {
+      const isFemale = userGender === "female";
+      const honorificKo = isFemale ? "의원님" : "주인님";
+      
+      const injunVoice = availableVoices.find((v) => {
+        const nameLower = v.name.toLowerCase();
+        return v.lang.toLowerCase().startsWith("ko") && 
+               (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
+      }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+
+      if (injunVoice) {
+        setSelectedBrowserVoice(injunVoice.name);
+        setBrowserPitch(0.85); // Professional Korean male pitch
+        setBrowserRate(0.95);
+        setSpeechLanguage("ko-KR");
+        localStorage.setItem("jarvis_speech_lang", "ko-KR");
+        setTranslateKToEMode(false); // Disable translate so J.A.R.V.I.S. speaks Korean directly
+        localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+        setInputLanguage("ko-KR");
+        localStorage.setItem("jarvis_input_lang", "ko-KR");
+
+        const replyMsg = `[SPEECH: 예, ${honorificKo}. 고성능 한국어 남성 음성 프로필인 '인준(Injun)' 엔진으로 업그레이드를 완료하였습니다. 메인프레임 통신 장치가 완전히 정렬되었습니다.] 예, ${honorificKo}. 고성능 한국어 남성 음성 프로필 '인준(Injun)' 엔진으로 음성 합성 장치 업그레이드를 완료하였습니다. 모든 대화 및 시스템 음성이 한국어 모드로 정상 구동됩니다.`;
+        
+        const jarvisUpgradeMsg: ChatMessage = {
+          id: `m_${Date.now()}_jarvis_upgrade_injun`,
+          role: "jarvis",
+          text: replyMsg,
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, userMsg, jarvisUpgradeMsg]);
+        setInputText("");
+        setStatus("idle");
+        speakOutput(replyMsg, "ko-KR");
+        setErrorNotice("🎙️ J.A.R.V.I.S. voice upgraded to Microsoft Injun Online (Korean Male).");
+        return;
+      } else {
+        const fallbackVoice = availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+        if (fallbackVoice) {
+          setSelectedBrowserVoice(fallbackVoice.name);
+          setSpeechLanguage("ko-KR");
+          localStorage.setItem("jarvis_speech_lang", "ko-KR");
+          setTranslateKToEMode(false);
+          localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+          setInputLanguage("ko-KR");
+          localStorage.setItem("jarvis_input_lang", "ko-KR");
+        }
+        
+        const replyMsg = `[SPEECH: Sir, I could not detect the specific 'Injun' voice engine on this local platform. However, I have activated the default Korean vocal synthesizer for you.] ${honorificKo}, 현재 로컬 브라우저 환경에서 특정 '인준' 음성 엔진을 직접 감지하지 못했습니다. 대신 사용 가능한 디바이스 기본 한국어 음성 엔진을 최적화하여 정상 구동하였습니다.`;
+        
+        const jarvisUpgradeMsg: ChatMessage = {
+          id: `m_${Date.now()}_jarvis_upgrade_injun_fail`,
+          role: "jarvis",
+          text: replyMsg,
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, userMsg, jarvisUpgradeMsg]);
+        setInputText("");
+        setStatus("idle");
+        speakOutput(replyMsg, "ko-KR");
+        setErrorNotice("🎙️ Injun voice not found. Fallback Korean voice activated.");
+        return;
+      }
+    }
+
     if (isChangeToKoreanSpeech) {
-      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const replyMsg = `[SPEECH: Sir, as per your absolute overriding instructions, all Korean vocal synthesis arrays are decommissioned. I am locked to speaking exclusively in pure British English, but you can speak in Korean and I will translate it.] ${userHonorific}, my vocal synthesis is locked to English-only mode to maintain high-fidelity vocal clarity. However, you can speak to me in Korean and I will translate and understand your words perfectly.`;
+      const isFemale = userGender === "female";
+      const honorificKo = isFemale ? "의원님" : "주인님";
+      
+      const koVoice = availableVoices.find((v) => {
+        const nameLower = v.name.toLowerCase();
+        return v.lang.toLowerCase().startsWith("ko") && 
+               (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
+      }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+
+      if (koVoice) {
+        setSelectedBrowserVoice(koVoice.name);
+        setBrowserPitch(0.85); // Professional Korean male pitch
+        setBrowserRate(0.95);
+      }
+      setSpeechLanguage("ko-KR");
+      localStorage.setItem("jarvis_speech_lang", "ko-KR");
+      setTranslateKToEMode(false);
+      localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+      setInputLanguage("ko-KR");
+      localStorage.setItem("jarvis_input_lang", "ko-KR");
+
+      const replyMsg = `[SPEECH: 예, ${honorificKo}. 한국어 음성 출력 채널을 정상적으로 활성화하였습니다. 무엇을 도와드릴까요?] 예, ${honorificKo}. 한국어 음성 출력 시스템이 활성화되었습니다. 말씀하신 음성 합성 엔진을 정렬하였습니다.`;
       
       const jarvisTranslateMsg: ChatMessage = {
-         id: `m_${Date.now()}_jarvis_trans_locked`,
+         id: `m_${Date.now()}_jarvis_trans_ko`,
          role: "jarvis",
          text: replyMsg,
          timestamp: new Date(),
@@ -2484,8 +2580,8 @@ export default function App() {
       setMessages((prev) => [...prev, userMsg, jarvisTranslateMsg]);
       setInputText("");
       setStatus("idle");
-      speakOutput(replyMsg, "en-GB");
-      setErrorNotice("🎙️ English Speech locked. Korean vocal arrays inactive.");
+      speakOutput(replyMsg, "ko-KR");
+      setErrorNotice("🎙️ Korean Speech activated.");
       return;
     }
 
@@ -4821,11 +4917,13 @@ I can still map schedules, process identity registries, and synthesize local mic
                     {/* J.A.R.V.I.S. Vocal Language Choice */}
                     <div className="space-y-2">
                       <label className="text-cyan-500/80">J.A.R.V.I.S. VOCAL SPEECH LANGUAGE:</label>
-                      <div className="grid grid-cols-1 gap-1.5">
+                      <div className="grid grid-cols-2 gap-1.5">
                         <button
+                          type="button"
                           onClick={() => {
                             stopAllAudio();
                             setSpeechLanguage("en-GB");
+                            localStorage.setItem("jarvis_speech_lang", "en-GB");
                             const engVoice = availableVoices.find((v) => {
                               const langLower = v.lang.toLowerCase();
                               const nameLower = v.name.toLowerCase();
@@ -4838,10 +4936,41 @@ I can still map schedules, process identity registries, and synthesize local mic
                               setBrowserPitch(0.85);
                               setBrowserRate(0.95);
                             }
+                            setErrorNotice("🎙️ J.A.R.V.I.S. vocal language set to English (en-GB).");
                           }}
-                          className="py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all bg-cyan-500/25 text-cyan-200 border-cyan-500/40 cursor-default"
+                          className={`py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all cursor-pointer ${
+                            speechLanguage === "en-GB"
+                              ? "bg-cyan-500/25 text-cyan-200 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                              : "bg-slate-950/40 text-slate-400 border-slate-800 hover:border-cyan-500/30"
+                          }`}
                         >
-                          English 🇬🇧 (en-GB - Active)
+                          English 🇬🇧 (en-GB)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            stopAllAudio();
+                            setSpeechLanguage("ko-KR");
+                            localStorage.setItem("jarvis_speech_lang", "ko-KR");
+                            const koVoice = availableVoices.find((v) => {
+                              const nameLower = v.name.toLowerCase();
+                              return v.lang.toLowerCase().startsWith("ko") && 
+                                     (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
+                            }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+                            if (koVoice) {
+                              setSelectedBrowserVoice(koVoice.name);
+                              setBrowserPitch(0.85);
+                              setBrowserRate(0.95);
+                            }
+                            setErrorNotice("🎙️ J.A.R.V.I.S. vocal language set to Korean (ko-KR - Injun).");
+                          }}
+                          className={`py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all cursor-pointer ${
+                            speechLanguage === "ko-KR"
+                              ? "bg-cyan-500/25 text-cyan-200 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                              : "bg-slate-950/40 text-slate-400 border-slate-800 hover:border-cyan-500/30"
+                          }`}
+                        >
+                          Korean 🇰🇷 (ko-KR)
                         </button>
                       </div>
                     </div>
@@ -4936,7 +5065,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                           </select>
                         </div>
 
-                        <div className="pt-0.5">
+                        <div className="grid grid-cols-2 gap-2 pt-0.5">
                           <button
                             type="button"
                             onClick={() => {
@@ -4953,13 +5082,45 @@ I can still map schedules, process identity registries, and synthesize local mic
                                 setSelectedBrowserVoice(ukVoice.name);
                                 setBrowserPitch(0.85); // Sophisticated English pitch
                                 setBrowserRate(0.95); // Polite British pace
+                                setSpeechLanguage("en-GB");
+                                localStorage.setItem("jarvis_speech_lang", "en-GB");
+                                setErrorNotice("🎙️ J.A.R.V.I.S. voice preset set to UK English J.A.R.V.I.S. voice.");
                               } else {
                                 alert("No local UK English (en-GB) voice profiles detected on this device. Falling back to default system voice.");
                               }
                             }}
-                            className="w-full bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[10px] py-2 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
+                            className="bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[10px] py-2 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
                           >
-                            <span>🇬🇧 J.A.R.V.I.S. (UK ENGLISH)</span>
+                            <span>🇬🇧 J.A.R.V.I.S. (UK)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              stopAllAudio();
+                              const injunVoice = availableVoices.find((v) => {
+                                const nameLower = v.name.toLowerCase();
+                                return v.lang.toLowerCase().startsWith("ko") && 
+                                       (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
+                              }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+
+                              if (injunVoice) {
+                                setSelectedBrowserVoice(injunVoice.name);
+                                setBrowserPitch(0.85); // Professional Korean male pitch
+                                setBrowserRate(0.95); // Polite pace
+                                setSpeechLanguage("ko-KR");
+                                localStorage.setItem("jarvis_speech_lang", "ko-KR");
+                                setTranslateKToEMode(false);
+                                localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+                                setInputLanguage("ko-KR");
+                                localStorage.setItem("jarvis_input_lang", "ko-KR");
+                                setErrorNotice("🎙️ J.A.R.V.I.S. voice upgraded to Injun (Korean Male Preset).");
+                              } else {
+                                alert("No Korean (ko-KR) voice profiles detected on this device.");
+                              }
+                            }}
+                            className="bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[10px] py-2 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <span>🇰🇷 J.A.R.V.I.S. (INJUN)</span>
                           </button>
                         </div>
 
