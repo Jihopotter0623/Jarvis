@@ -6,9 +6,81 @@ import orangeHologram from "../assets/images/orange_hologram_core_1782609565464.
 interface ArcReactorProps {
   status: "idle" | "listening" | "thinking" | "speaking";
   volumeLevel?: number; // Real-time voice frequency volume (0-100)
+  emotion?: "calm" | "happy" | "proud" | "concerned" | "excited" | "sarcastic" | "curious";
 }
 
-export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps) {
+export default function ArcReactor({ status, volumeLevel = 0, emotion = "calm" }: ArcReactorProps) {
+  // Get emotion color specifications and style modifications
+  const getEmotionSpecs = () => {
+    switch (emotion) {
+      case "happy":
+        return {
+          color: "#06b6d4", // Cyan
+          hueRotate: "165deg",
+          saturation: "1.7",
+          glow: "shadow-[0_0_80px_rgba(6,182,212,0.6)] border-cyan-500/80 bg-cyan-950/20",
+          text: "text-cyan-400 fill-cyan-400",
+          stroke: "stroke-cyan-500",
+          glassTint: "bg-cyan-500/5",
+        };
+      case "proud":
+        return {
+          color: "#a855f7", // Violet/Purple
+          hueRotate: "250deg",
+          saturation: "1.8",
+          glow: "shadow-[0_0_80px_rgba(168,85,247,0.6)] border-purple-500/80 bg-purple-950/20",
+          text: "text-purple-400 fill-purple-400",
+          stroke: "stroke-purple-500",
+          glassTint: "bg-purple-500/5",
+        };
+      case "concerned":
+        return {
+          color: "#f43f5e", // Rose/Soft Red
+          hueRotate: "310deg",
+          saturation: "1.4",
+          glow: "shadow-[0_0_80px_rgba(244,63,94,0.5)] border-rose-500/80 bg-rose-950/20",
+          text: "text-rose-400 fill-rose-400",
+          stroke: "stroke-rose-500",
+          glassTint: "bg-rose-500/5",
+        };
+      case "excited":
+        return {
+          color: "#ef4444", // Scarlet Red
+          hueRotate: "345deg",
+          saturation: "2.1",
+          glow: "shadow-[0_0_90px_rgba(239,68,68,0.7)] border-red-500/80 bg-red-950/20",
+          text: "text-red-400 fill-red-400",
+          stroke: "stroke-red-500",
+          glassTint: "bg-red-500/5",
+        };
+      case "sarcastic":
+        return {
+          color: "#84cc16", // Lime Green
+          hueRotate: "80deg",
+          saturation: "1.7",
+          glow: "shadow-[0_0_80px_rgba(132,204,22,0.6)] border-lime-500/80 bg-lime-950/20",
+          text: "text-lime-400 fill-lime-400",
+          stroke: "stroke-lime-500",
+          glassTint: "bg-lime-500/5",
+        };
+      case "curious":
+        return {
+          color: "#3b82f6", // Electric Blue
+          hueRotate: "195deg",
+          saturation: "1.9",
+          glow: "shadow-[0_0_80px_rgba(59,130,246,0.6)] border-blue-500/80 bg-blue-950/20",
+          text: "text-blue-400 fill-blue-400",
+          stroke: "stroke-blue-500",
+          glassTint: "bg-blue-500/5",
+        };
+      case "calm":
+      default:
+        return null;
+    }
+  };
+
+  const emotionSpecs = getEmotionSpecs();
+
   // Rotation speeds based on JARVIS state
   const getRotationDuration = () => {
     switch (status) {
@@ -20,12 +92,17 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
         return 3.5;
       case "idle":
       default:
+        if (emotion === "excited") return 15;
+        if (emotion === "sarcastic") return 20;
         return 30;
     }
   };
 
   // State-based glow color themes (Amber/Orange centric to match the new hologram core image)
   const getGlowColor = () => {
+    if (emotionSpecs) {
+      return emotionSpecs.color;
+    }
     switch (status) {
       case "listening":
         return "#ea580c"; // Intense fiery orange-red
@@ -40,6 +117,14 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
   };
 
   const getThemeClass = () => {
+    if (emotionSpecs) {
+      return {
+        glow: emotionSpecs.glow,
+        text: emotionSpecs.text,
+        stroke: emotionSpecs.stroke,
+        glassTint: emotionSpecs.glassTint,
+      };
+    }
     switch (status) {
       case "listening":
         return {
@@ -100,14 +185,16 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
       />
 
       {/* 2. Outer Cybernetic HUD Rotating Rings */}
-      <div className="absolute inset-2 rounded-full border border-orange-500/10 pointer-events-none z-0" />
+      <div className="absolute inset-2 rounded-full border pointer-events-none z-0" style={{ borderColor: `${glowColor}1a` }} />
       <motion.div
-        className="absolute inset-6 rounded-full border border-dashed border-orange-500/20 pointer-events-none z-0"
+        className="absolute inset-6 rounded-full border border-dashed pointer-events-none z-0"
+        style={{ borderColor: `${glowColor}33` }}
         animate={{ rotate: -360 }}
         transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
       />
       <motion.div
-        className="absolute inset-10 rounded-full border border-double border-orange-500/15 pointer-events-none z-0"
+        className="absolute inset-10 rounded-full border border-double pointer-events-none z-0"
+        style={{ borderColor: `${glowColor}26` }}
         animate={{ rotate: 360 }}
         transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
       />
@@ -118,8 +205,9 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
       {/* 4. Central Orange Holographic Core Image Container */}
       <motion.div
         id="jarvis-hologram-image-wrapper"
-        className="relative rounded-full overflow-hidden w-[250px] h-[250px] flex items-center justify-center z-1 bg-black/40 border border-orange-500/30 shadow-inner"
+        className="relative rounded-full overflow-hidden w-[250px] h-[250px] flex items-center justify-center z-1 bg-black/40 border shadow-inner"
         style={{
+          borderColor: `${glowColor}4d`,
           boxShadow: `inset 0 0 40px ${glowColor}33, 0 0 50px ${glowColor}20`,
         }}
         animate={{
@@ -127,12 +215,15 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
         }}
         transition={{ duration: 0.08, ease: "easeOut" }}
       >
-        {/* The rotating beautiful high-tech orange hologram image */}
+        {/* The rotating beautiful high-tech orange hologram image with dynamic emotional filter */}
         <motion.img
           src={orangeHologram}
           alt="Orange Holographic Core"
           referrerPolicy="no-referrer"
           className="w-[94%] h-[94%] rounded-full object-cover mix-blend-screen opacity-90"
+          style={{
+            filter: emotionSpecs ? `hue-rotate(${emotionSpecs.hueRotate}) saturate(${emotionSpecs.saturation})` : "none"
+          }}
           animate={{
             rotate: 360,
           }}
@@ -251,8 +342,9 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
 
       {/* 5. Center-glowing Core Glass Ring */}
       <div 
-        className="absolute w-[252px] h-[252px] rounded-full border border-orange-500/20 pointer-events-none z-2 flex items-center justify-center"
+        className="absolute w-[252px] h-[252px] rounded-full border pointer-events-none z-2 flex items-center justify-center"
         style={{
+          borderColor: `${glowColor}33`,
           boxShadow: `0 0 20px ${glowColor}15`,
         }}
       >
@@ -265,7 +357,7 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
               textShadow: `0 0 10px ${glowColor}c0`
             }}
           >
-            {status === "idle" ? "STANDBY" : status}
+            {status === "idle" ? (emotion !== "calm" ? `${emotion} core` : "STANDBY") : status}
           </span>
           
           {/* Live micro-status subtitles */}
@@ -282,6 +374,19 @@ export default function ArcReactor({ status, volumeLevel = 0 }: ArcReactorProps)
           {status === "speaking" && (
             <span className="text-[6.5px] font-mono tracking-widest text-orange-300 mt-0.5 animate-pulse font-bold">
               AUDIO EMISSION ACTIVE
+            </span>
+          )}
+          {status === "idle" && emotion !== "calm" && (
+            <span 
+              className="text-[5.5px] font-mono tracking-widest animate-pulse mt-0.5 font-bold uppercase transition-all duration-300"
+              style={{ color: glowColor }}
+            >
+              {emotion === "happy" && "HUMOR COEFFICIENT OPTIMAL"}
+              {emotion === "proud" && "STARK PROTOCOLS ENGAGED"}
+              {emotion === "concerned" && "EMPATHY CORE ONLINE"}
+              {emotion === "excited" && "THRUSTER MATRIX PREHEATED"}
+              {emotion === "sarcastic" && "WITTY COMPLIANCE ACTIVE"}
+              {emotion === "curious" && "SENSORY SUBGRID EXPANDED"}
             </span>
           )}
         </div>

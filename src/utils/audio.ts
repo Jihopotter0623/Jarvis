@@ -96,6 +96,46 @@ export function playRawPCM(
   });
 }
 
+// Romanize Korean text so English voices can speak it in an English-accented J.A.R.V.I.S. voice!
+export function romanizeText(text: string): string {
+  let result = "";
+  for (let i = 0; i < text.length; i++) {
+    const charCode = text.charCodeAt(i);
+    if (charCode >= 0xAC00 && charCode <= 0xD7A3) {
+      const syllableIndex = charCode - 0xAC00;
+      const initial = Math.floor(syllableIndex / 588);
+      const medial = Math.floor((syllableIndex % 588) / 28);
+      const finalConsonant = syllableIndex % 28;
+
+      const initials = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"];
+      const medials = ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"];
+      const finals = ["", "g", "g", "g", "n", "n", "n", "d", "l", "l", "m", "l", "l", "l", "l", "l", "m", "b", "b", "t", "t", "ng", "t", "t", "k", "t", "p", "t"];
+
+      const sep = (i < text.length - 1 && text.charCodeAt(i + 1) >= 0xAC00 && text.charCodeAt(i + 1) <= 0xD7A3) ? "-" : "";
+      
+      const initialStr = initials[initial];
+      const medialStr = medials[medial];
+      const finalStr = finals[finalConsonant];
+
+      let smoothMedial = medialStr;
+      if (smoothMedial === "eu") smoothMedial = "u";
+      if (smoothMedial === "eo") smoothMedial = "uh";
+      if (smoothMedial === "ae") smoothMedial = "ay";
+      if (smoothMedial === "yeo") smoothMedial = "yo";
+      
+      result += initialStr + smoothMedial + finalStr + sep;
+    } else {
+      result += text.charAt(i);
+    }
+  }
+  return result
+    .replace(/-+/g, "-")
+    .replace(/-\s+/g, " ")
+    .replace(/\s+-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Speak using browser's built-in Web Speech API SpeechSynthesis
 export function speakWithBrowser(
   text: string,
@@ -106,6 +146,7 @@ export function speakWithBrowser(
     onEnd?: () => void;
     onError?: (err: any) => void;
     lang?: string;
+    emotion?: string;
   } = {}
 ): SpeechSynthesisUtterance | null {
   if (!("speechSynthesis" in window)) {
@@ -117,13 +158,10 @@ export function speakWithBrowser(
   // Cancel any running speech
   window.speechSynthesis.cancel();
 
-  // Completely disable Korean vocal speech synthesis as requested
-  const containsKorean = false;
+  // Dynamically check if we are speaking Korean
+  const containsKorean = options.lang === "ko-KR" || /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\uffa0-\uffdf]/.test(text);
 
   let textToSpeak = text;
-
-  const utterance = new SpeechSynthesisUtterance(textToSpeak);
-  utterance.lang = (options.lang && options.lang !== "ko-KR") ? options.lang : "en-GB";
 
   // Attempt to select a suitable voice
   const voices = window.speechSynthesis.getVoices();
@@ -131,7 +169,7 @@ export function speakWithBrowser(
   let isManuallySelected = false;
 
   // 1. First priority: Check if a specific voice has been manually requested/selected.
-  // We respect the user's manual choice directly, regardless of language filters.
+  // We respect the user's manual choice directly!
   if (options.voiceName) {
     const candidateVoice = voices.find((v) => v.name === options.voiceName);
     if (candidateVoice) {
@@ -170,6 +208,7 @@ export function speakWithBrowser(
           return (nameLower.includes("uk") || nameLower.includes("united kingdom") || nameLower.includes("great britain") || nameLower.includes("gb")) && nameLower.includes("male");
         });
       }
+
 
       // 4. Look for ANY English Male voice (including en-US, en-AU, etc.) with explicit "male" keyword or known male names
       if (!selectedVoice) {
@@ -287,6 +326,15 @@ export function speakWithBrowser(
     }
   }
 
+  // If the chosen voice is non-Korean (e.g., English), but the input contains Korean, we Romanize the text to let the English voice speak it!
+  const isSelectedVoiceKorean = selectedVoice ? selectedVoice.lang.toLowerCase().startsWith("ko") : containsKorean;
+  if (containsKorean && !isSelectedVoiceKorean) {
+    textToSpeak = romanizeText(textToSpeak);
+  }
+
+  const utterance = new SpeechSynthesisUtterance(textToSpeak);
+  utterance.lang = containsKorean && isSelectedVoiceKorean ? "ko-KR" : (selectedVoice ? selectedVoice.lang : "en-GB");
+
   if (selectedVoice) {
     utterance.voice = selectedVoice;
     utterance.lang = selectedVoice.lang;
@@ -339,6 +387,12 @@ export function speakWithBrowser(
     // For manually chosen voices, respect the exact slider pitch and rate directly!
     utterance.pitch = options.pitch ?? 1.0;
     utterance.rate = options.rate ?? 1.0;
+
+    // For Korean, if a female voice is selected, force a deep baritone simulation if pitch is set to a default/high value (> 0.7)
+    if (containsKorean && !isMaleVoice && utterance.pitch > 0.7) {
+      utterance.pitch = 0.40; // Force deep baritone simulation
+      utterance.rate = Math.min(utterance.rate, 0.90);
+    }
   } else {
     // Apply automatic J.A.R.V.I.S. voice tuning/simulation only for auto-detected fallbacks
     if (containsKorean) {
@@ -364,6 +418,36 @@ export function speakWithBrowser(
         utterance.pitch = 1.0; // Natural pitch for standard non-male fallback
         utterance.rate = options.rate ?? 0.98;
       }
+    }
+  }
+
+  // Apply emotional voice modifications if an emotion is set!
+  if (options.emotion && options.emotion !== "calm") {
+    switch (options.emotion) {
+      case "happy":
+        utterance.pitch = Math.min(2.0, utterance.pitch * 1.12);
+        utterance.rate = Math.min(2.0, utterance.rate * 1.06);
+        break;
+      case "proud":
+        utterance.pitch = Math.max(0.1, utterance.pitch * 0.94);
+        utterance.rate = Math.max(0.1, utterance.rate * 0.92);
+        break;
+      case "concerned":
+        utterance.pitch = Math.max(0.1, utterance.pitch * 0.91);
+        utterance.rate = Math.max(0.1, utterance.rate * 0.83);
+        break;
+      case "excited":
+        utterance.pitch = Math.min(2.0, utterance.pitch * 1.18);
+        utterance.rate = Math.min(2.0, utterance.rate * 1.15);
+        break;
+      case "sarcastic":
+        utterance.pitch = Math.max(0.1, utterance.pitch * 0.94);
+        utterance.rate = Math.max(0.1, utterance.rate * 0.96);
+        break;
+      case "curious":
+        utterance.pitch = Math.min(2.0, utterance.pitch * 1.06);
+        utterance.rate = Math.min(2.0, utterance.rate * 1.00);
+        break;
     }
   }
 

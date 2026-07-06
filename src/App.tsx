@@ -72,6 +72,38 @@ export default function App() {
   const [bootLogs, setBootLogs] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+  const [customInstructionFileContent, setCustomInstructionFileContent] = useState<string>(
+    () => localStorage.getItem("jarvis_custom_instruction_file_content") || ""
+  );
+  const [customInstructionFileName, setCustomInstructionFileName] = useState<string>(
+    () => localStorage.getItem("jarvis_custom_instruction_file_name") || ""
+  );
+
+  const handleCustomInstructionFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      setCustomInstructionFileContent(text);
+      setCustomInstructionFileName(file.name);
+      localStorage.setItem("jarvis_custom_instruction_file_content", text);
+      localStorage.setItem("jarvis_custom_instruction_file_name", file.name);
+      setErrorNotice(`💾 Custom directive file loaded: ${file.name}`);
+      speakOutput(`I have successfully loaded and analyzed the custom instructions from ${file.name}, Sir. Setting master overrides.`, "en-GB");
+    };
+    reader.readAsText(file);
+  };
+  
+  const handleClearCustomInstructionFile = () => {
+    setCustomInstructionFileContent("");
+    setCustomInstructionFileName("");
+    localStorage.removeItem("jarvis_custom_instruction_file_content");
+    localStorage.removeItem("jarvis_custom_instruction_file_name");
+    setErrorNotice("💾 Custom directive file cleared.");
+    speakOutput("Custom system directives cleared, Sir. Reverting system matrix to default parameters.", "en-GB");
+  };
+
   const [userName, setUserName] = useState(() => localStorage.getItem("jarvis_user_name") || "Mr. Stark");
   const [userGender, setUserGender] = useState<"male" | "female">(
     () => (localStorage.getItem("jarvis_user_gender") as "male" | "female") || "male"
@@ -87,36 +119,28 @@ export default function App() {
   const [inputLanguage, setInputLanguage] = useState<"ko-KR" | "en-US">(
     () => {
       const saved = localStorage.getItem("jarvis_input_lang");
-      if (!saved || saved === "en-US") {
-        localStorage.setItem("jarvis_input_lang", "ko-KR");
-        return "ko-KR";
-      }
-      return (saved as "ko-KR" | "en-US") || "ko-KR";
+      return (saved as "ko-KR" | "en-US") || "en-US";
     }
   );
   const [speechLanguage, setSpeechLanguage] = useState<"ko-KR" | "en-GB">(
     () => {
       const saved = localStorage.getItem("jarvis_speech_lang");
-      if (!saved || saved === "ko-KR") {
-        localStorage.setItem("jarvis_speech_lang", "en-GB");
-        return "en-GB";
-      }
+      if (saved === "ko-KR") return "en-GB";
       return (saved as "ko-KR" | "en-GB") || "en-GB";
     }
   );
   const [translateKToEMode, setTranslateKToEMode] = useState<boolean>(
     () => {
       const saved = localStorage.getItem("jarvis_translate_ktoe_mode");
-      if (!saved || saved === "false") {
-        localStorage.setItem("jarvis_translate_ktoe_mode", "true");
-        return true;
-      }
       return saved === "true";
     }
   );
   const [jarvisChirpEnabled, setJarvisChirpEnabled] = useState<boolean>(
     () => localStorage.getItem("jarvis_chirp_enabled") !== "false"
   );
+
+  // Emotional Core State
+  const [jarvisEmotion, setJarvisEmotion] = useState<"calm" | "happy" | "proud" | "concerned" | "excited" | "sarcastic" | "curious">("calm");
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>(() => {
     try {
@@ -238,10 +262,10 @@ export default function App() {
     addLog("⚡ J.A.R.V.I.S. Diagnostics initialized. Scanning sub-routing tables...");
 
     const steps = [
-      { id: "server", name: "서버 연결망 (Server Connection)", status: "pending", detail: "대기 중..." },
-      { id: "syntax", name: "API 키 구문 형태 (API Key Format)", status: "pending", detail: "대기 중..." },
-      { id: "auth", name: "메인프레임 인증 (Gemini Auth)", status: "pending", detail: "대기 중..." },
-      { id: "audio", name: "음성 합성 출력 (Audio Synthesis)", status: "pending", detail: "대기 중..." },
+      { id: "server", name: "Server Connection Link", status: "pending", detail: "Standby..." },
+      { id: "syntax", name: "API Key String Format", status: "pending", detail: "Standby..." },
+      { id: "auth", name: "Mainframe Gemini Auth", status: "pending", detail: "Standby..." },
+      { id: "audio", name: "Audio Speech Synthesis", status: "pending", detail: "Standby..." },
     ] as DiagnosticStep[];
 
     const updateStep = (id: string, status: "pending" | "running" | "success" | "error", detail: string) => {
@@ -255,7 +279,7 @@ export default function App() {
     const foundErrors: DetectedError[] = [];
 
     // --- STEP 1: SERVER LINK ---
-    updateStep("server", "running", "로컬 백엔드 서버 핑(Ping) 테스트 중...");
+    updateStep("server", "running", "Testing local server latency (Ping)...");
     addLog("Pinging central Express server mainframe at /api/health...");
     try {
       const t1 = performance.now();
@@ -263,28 +287,28 @@ export default function App() {
       const t2 = performance.now();
       if (res.ok) {
         const data = await res.json();
-        updateStep("server", "success", `연결 성공 (${Math.round(t2 - t1)}ms) - Status: ${data.status || "ok"}`);
+        updateStep("server", "success", `Connected (${Math.round(t2 - t1)}ms) - Status: ${data.status || "ok"}`);
         addLog(`✔ Server mainframe responsive in ${Math.round(t2 - t1)}ms. Local micro-node online.`);
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
     } catch (err: any) {
-      updateStep("server", "error", `서버 미가동: ${err.message}`);
+      updateStep("server", "error", `Server Offline: ${err.message}`);
       addLog(`✘ ERROR: Express mainframe returned offline state. ${err.message}`);
       foundErrors.push({
         code: "SERVER_OFFLINE",
-        message: "로컬 백엔드 메인프레임 서버가 응답하지 않습니다.",
-        recommendation: "서버를 재시작하거나 네트워크가 완전히 초기화될 때까지 잠시 대기해 주십시오.",
+        message: "The local backend mainframe server is unresponsive.",
+        recommendation: "Please restart your dev server or wait briefly for the network environment to initialize.",
         fixable: false
       });
     }
 
     // --- STEP 2: API KEY SYNTAX VALIDATOR ---
-    updateStep("syntax", "running", "API 키 구문 규칙 정밀 분석 중...");
+    updateStep("syntax", "running", "Analyzing API key string structure...");
     addLog("Analyzing personal cryptographic key format details...");
     const key = tempApiKey.trim();
     if (!key) {
-      updateStep("syntax", "success", "선택 사양: 개인 API 키 없음 (서버 공용 키 사용)");
+      updateStep("syntax", "success", "Optional: No personal key (Shared system active)");
       addLog("⚠ INFO: No personal Gemini API key entered. Operating on prebuilt shared server mainframe. Quota limits may apply.");
     } else {
       let isSyntaxClean = true;
@@ -293,8 +317,8 @@ export default function App() {
         addLog("✘ ERROR: Whitespace spacing characters detected inside your API key.");
         foundErrors.push({
           code: "SPACES_IN_KEY",
-          message: "API 키에 공백(띄어쓰기 또는 줄바꿈)이 포함되어 있습니다.",
-          recommendation: "자동 오류 교정 버튼을 누르시면, 공백과 줄바꿈 문자를 자동으로 제거하여 올바르게 포맷합니다.",
+          message: "API Key contains spaces or newline characters.",
+          recommendation: "Use the Autopilot Fix button to automatically strip all whitespaces and fix formatting.",
           fixable: true
         });
       }
@@ -303,8 +327,8 @@ export default function App() {
         addLog("✘ ERROR: Double or single quotation marks (\" or ') found framing the API key.");
         foundErrors.push({
           code: "QUOTES_IN_KEY",
-          message: "API 키의 시작이나 끝에 따옴표(' 또는 \")가 삽입되어 있습니다.",
-          recommendation: "보통 환경 설정이나 코드를 그대로 복사할 때 발생합니다. 자동 복구 시 따옴표를 정밀 제거합니다.",
+          message: "API Key is wrapped in double or single quotes.",
+          recommendation: "Quotes typically appear when copying variables. The autopilot tool will extract the pure key string.",
           fixable: true
         });
       }
@@ -313,8 +337,8 @@ export default function App() {
         addLog("✘ ERROR: Key sequence contains bash environment definitions (export GEMINI_API_KEY=).");
         foundErrors.push({
           code: "WRONG_PREFIX",
-          message: "환경 변수 정의 명령어(export GEMINI_API_KEY=)가 함께 복사되었습니다.",
-          recommendation: "값 앞부분의 환경 변수 명령어를 지우고 순수한 API 키 문자열만 추출하여 저장하도록 자동 교정합니다.",
+          message: "The shell environment prefix (export GEMINI_API_KEY=) was pasted with the key.",
+          recommendation: "Autopilot will clean the command line prefix and isolate the true key string.",
           fixable: true
         });
       }
@@ -322,22 +346,22 @@ export default function App() {
         addLog("⚠ WARN: Key sequence does not start with standard Google Cloud identifier 'AIzaSy'. This might cause authentication failures.");
         foundErrors.push({
           code: "WRONG_FORMAT",
-          message: "Gemini API 키의 고유 식별자(AIzaSy)가 시작 부분에 보이지 않습니다.",
-          recommendation: "구글 AI 스튜디오에서 발급받은 정식 API 키가 맞는지 확인해 주십시오 (AIzaSy로 시작해야 합니다).",
+          message: "Missing the unique Google Cloud identifier prefix (AIzaSy).",
+          recommendation: "Please verify that you copied the correct API Key from Google AI Studio (which should start with AIzaSy).",
           fixable: false
         });
       }
 
       if (isSyntaxClean) {
-        updateStep("syntax", "success", "정상 - 완벽한 구문 형태");
+        updateStep("syntax", "success", "Clean - Perfect Syntax Form");
         addLog("✔ API key syntax clean. Static regex check passed.");
       } else {
-        updateStep("syntax", "error", "오류 감지 - 구문 분석 실패");
+        updateStep("syntax", "error", "Error Detected - Syntax Parse Failed");
       }
     }
 
     // --- STEP 3: MAINFRAME AUTHENTICATION (GEMINI AUTH) ---
-    updateStep("auth", "running", "클라우드 메인프레임 통신 및 인증 테스트 중...");
+    updateStep("auth", "running", "Initiating secure handshake with mainframe cloud...");
     addLog("Sending secure diagnostic test query to Google GenAI server...");
     
     try {
@@ -357,32 +381,32 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          updateStep("auth", "success", "인증 완료 - 인공지능 통신 양호");
+          updateStep("auth", "success", "Authenticated - Mainframe Active");
           addLog("✔ Model authentication successful! Uplink active and verified.");
         } else {
-          updateStep("auth", "error", "인증 실패 - Mainframe rejected key");
+          updateStep("auth", "error", "Rejected - Mainframe Rejected Key");
           addLog(`✘ API ERROR: ${data.error}`);
           
           const errMsg = (data.error || "").toLowerCase();
           if (errMsg.includes("api key") || errMsg.includes("invalid key") || errMsg.includes("not valid") || errMsg.includes("key not found")) {
             foundErrors.push({
               code: "INVALID_KEY",
-              message: "입력된 개인 API 키가 구글 측 인증에서 거부되었습니다 (유효하지 않은 키).",
-              recommendation: "구글 AI 스튜디오에서 키가 활성화 상태인지 확인하시거나, 키를 다시 발급받아 입력하십시오. 자동 수정 시 오기입 방지를 위해 키를 초기화합니다.",
+              message: "The entered API key was rejected by Google server (Invalid Key).",
+              recommendation: "Verify if your key is active in Google AI Studio or regenerate a new one. Autopilot will reset the field to avoid lockouts.",
               fixable: true
             });
           } else if (errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("429") || errMsg.includes("exhausted")) {
             foundErrors.push({
               code: "QUOTA_EXCEEDED",
-              message: "구글 클라우드 할당량 한도 초과 (Rate Limit / Quota Exceeded) 상태입니다.",
-              recommendation: "현재 계정의 분당 또는 하루 무료 제공량이 모두 만료되었습니다. 즉시 지연 없는 가동을 원하시면 오프라인 자율 모드(LOCAL CORE)로 전환해 보십시오. 오프라인 모드에서는 API 키 없이도 모든 로컬 일정 및 터미널 기능이 무제한 작동합니다.",
+              message: "Google Cloud API Quota Limit Exceeded (Rate Limit / Quota Exceeded).",
+              recommendation: "Your current free-tier quota has expired. You can toggle Emergency Offline Mode (LOCAL CORE) to bypass cloud limitations completely.",
               fixable: true
             });
           } else {
             foundErrors.push({
               code: "AUTH_DENIED",
-              message: `서버 인증 중 기타 거부 응답이 발생했습니다: ${data.error}`,
-              recommendation: "입력된 키의 활성화 여부나 구글 API 서버 장애 상태를 점검해 보십시오.",
+              message: `Mainframe rejected validation: ${data.error}`,
+              recommendation: "Please verify that the key has correct permissions and your internet uplink is responsive.",
               fixable: false
             });
           }
@@ -391,25 +415,25 @@ export default function App() {
         throw new Error(`HTTP Error ${res.status}`);
       }
     } catch (err: any) {
-      updateStep("auth", "error", `통신 장애: ${err.message}`);
+      updateStep("auth", "error", `Network Error: ${err.message}`);
       addLog(`✘ Network failure on validation handshake: ${err.message}`);
     }
 
     // --- STEP 4: AUDIO SYNTHESIS & CONTEXT ---
-    updateStep("audio", "running", "음성 합성 출력 장치 검사 중...");
+    updateStep("audio", "running", "Verifying audio speech synthesis pipelines...");
     addLog("Analyzing local AudioContext pipelines and microphone authorization...");
     const hasAudioCtx = typeof window.AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined';
     
     if (hasAudioCtx) {
-      updateStep("audio", "success", "정상 - Web Audio 지원됨");
+      updateStep("audio", "success", "Active - Web Audio Supported");
       addLog("✔ Web Audio pipeline confirmed. Browser-level speech synthesizers active.");
     } else {
-      updateStep("audio", "error", "지원 안 함 - 브라우저 제한");
+      updateStep("audio", "error", "Unsupported - Browser Limitation");
       addLog("✘ Sound pipeline error: This browser agent restricts advanced Web Audio synthesis context.");
       foundErrors.push({
         code: "AUDIO_UNSUPPORTED",
-        message: "브라우저에서 고급 Web Audio API를 사용할 수 없습니다.",
-        recommendation: "최신 크롬(Chrome)이나 엣지(Edge) 브라우저를 사용해 보십시오.",
+        message: "Your browser does not fully support the Web Audio API.",
+        recommendation: "Please access this terminal using Google Chrome or Microsoft Edge for optimal voice performance.",
         fixable: false
       });
     }
@@ -959,8 +983,41 @@ export default function App() {
             if (koVoice) {
               setSelectedBrowserVoice(koVoice.name);
               localStorage.setItem("jarvis_selected_browser_voice", koVoice.name);
-              setBrowserPitch(0.85); // Natural, polished baritone
-              setBrowserRate(0.94);
+              
+              const isMale = 
+                koVoice.name.toLowerCase().includes("male") ||
+                koVoice.name.toLowerCase().includes("남성") ||
+                koVoice.name.toLowerCase().includes("minsu") ||
+                koVoice.name.toLowerCase().includes("민수") ||
+                koVoice.name.toLowerCase().includes("junwoo") ||
+                koVoice.name.toLowerCase().includes("준우") ||
+                koVoice.name.toLowerCase().includes("chinho") ||
+                koVoice.name.toLowerCase().includes("진호") ||
+                koVoice.name.toLowerCase().includes("injun") ||
+                koVoice.name.toLowerCase().includes("인준") ||
+                koVoice.name.toLowerCase().includes("gildong") ||
+                koVoice.name.toLowerCase().includes("길동") ||
+                koVoice.name.toLowerCase().includes("himchan") ||
+                koVoice.name.toLowerCase().includes("힘찬") ||
+                koVoice.name.toLowerCase().includes("tae-hoon") ||
+                koVoice.name.toLowerCase().includes("taehoon") ||
+                koVoice.name.toLowerCase().includes("min-ho") ||
+                koVoice.name.toLowerCase().includes("minho") ||
+                (koVoice.name.toLowerCase().includes("siri") && (
+                  koVoice.name.toLowerCase().includes("남자") || 
+                  koVoice.name.toLowerCase().includes("male") || 
+                  koVoice.name.toLowerCase().includes("2") || 
+                  koVoice.name.toLowerCase().includes("3") || 
+                  koVoice.name.toLowerCase().includes("4")
+                ));
+              
+              if (isMale) {
+                setBrowserPitch(0.85); // Natural, polished baritone
+                setBrowserRate(0.94);
+              } else {
+                setBrowserPitch(0.40); // Force deep baritone simulation for female fallback voice
+                setBrowserRate(0.88);
+              }
             }
           } else {
             // Otherwise, search for British Male (J.A.R.V.I.S.) or general en-GB voice
@@ -1495,7 +1552,11 @@ export default function App() {
     stopAllAudio();
     setStatus("speaking");
 
-    let textToRead = text.replace(/[*#_~`\[\]{}]/g, ""); // strip markdown styling for clean vocal syntax
+    // Pre-process the text to strip asterisk-wrapped emotional stage directions (e.g. *chuckles warmly*, *나지막이 미소 지으며*)
+    // We replace them with a natural ellipsis/pause '... ' so the Speech Synthesis engine breathes naturally instead of reading the stage directions!
+    let textToRead = text.replace(/\*[^*]+\*/g, "... ");
+    textToRead = textToRead.replace(/\[EMOTION:\s*[a-zA-Z_]+\]/gi, ""); // strip any remaining emotion tags
+    textToRead = textToRead.replace(/[*#_~`\[\]{}]/g, ""); // strip other markdown styling for clean vocal syntax
 
     // Dynamic replacement of static J.A.R.V.I.S. system messages when Korean output is selected
     if (speechLanguage === "ko-KR") {
@@ -1577,6 +1638,7 @@ export default function App() {
             rate: browserRate,
             voiceName: selectedBrowserVoice,
             lang: lang,
+            emotion: jarvisEmotion,
             onEnd: () => {
               playRadioChirp(false);
               handleSpeechFinished();
@@ -1595,6 +1657,7 @@ export default function App() {
         rate: browserRate,
         voiceName: selectedBrowserVoice,
         lang: lang,
+        emotion: jarvisEmotion,
         onEnd: () => handleSpeechFinished(),
         onError: () => handleSpeechFinished(),
       });
@@ -1725,13 +1788,31 @@ export default function App() {
     hasWelcomedClapRef.current = true;
     setHasWelcomedClap(true);
 
-    // Explicitly set Korean-to-English translation mode and browser voice engine on first start as requested by the user
-    setTranslateKToEMode(true);
-    localStorage.setItem("jarvis_translate_ktoe_mode", "true");
-    setInputLanguage("ko-KR");
-    localStorage.setItem("jarvis_input_lang", "ko-KR");
-    setSpeechLanguage("en-GB");
-    localStorage.setItem("jarvis_speech_lang", "en-GB");
+    // Respect user's existing language and translation preference if saved in localStorage
+    const savedKToE = localStorage.getItem("jarvis_translate_ktoe_mode");
+    const savedInputLang = localStorage.getItem("jarvis_input_lang");
+    const savedSpeechLang = localStorage.getItem("jarvis_speech_lang");
+
+    if (savedKToE === null) {
+      setTranslateKToEMode(false);
+      localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+    } else {
+      setTranslateKToEMode(savedKToE === "true");
+    }
+
+    if (savedInputLang === null) {
+      setInputLanguage("en-US");
+      localStorage.setItem("jarvis_input_lang", "en-US");
+    } else {
+      setInputLanguage(savedInputLang as "ko-KR" | "en-US");
+    }
+
+    if (savedSpeechLang === null) {
+      setSpeechLanguage("en-GB");
+      localStorage.setItem("jarvis_speech_lang", "en-GB");
+    } else {
+      setSpeechLanguage(savedSpeechLang as "ko-KR" | "en-GB");
+    }
     
     setVoiceEngine("browser");
     localStorage.setItem("jarvis_voice_engine", "browser");
@@ -1758,9 +1839,7 @@ export default function App() {
       setRevealStep(4);
       playBootSound();
 
-      const primaryWelcome = speechLanguage === "ko-KR" || localStorage.getItem("jarvis_speech_lang") === "ko-KR"
-        ? `[SPEECH: 자비스 시스템이 완전히 초기화되었습니다. 모든 자가 진단 결과 이상 없으며, 아크 리액터 코어는 85%의 출력으로 매우 안정적입니다. 주인님, 오늘 어떤 프로젝트의 시뮬레이션을 도와드릴까요?] 자비스 시스템이 성공적으로 초기화되었습니다. 모든 자가 진단이 완료되었으며, 아크 리액터는 85%의 출력으로 안정화되었습니다. 오늘 어떤 프로젝트의 시뮬레이션을 도와드릴까요, 주인님?`
-        : `[SPEECH: J.A.R.V.I.S. mainframe is fully initialized. All diagnostics are green, and the Arc Reactor core is stable at eighty-five percent. Let me know how I may assist you today, Mr. Stark.] 자비스 시스템이 성공적으로 초기화되었습니다. 모든 자가 진단이 완료되었으며, 아크 리액터는 85%의 출력으로 안정화되었습니다. 오늘 어떤 프로젝트의 시뮬레이션을 도와드릴까요, 스타크 님?`;
+      const primaryWelcome = `[SPEECH: J.A.R.V.I.S. mainframe is fully initialized. All diagnostics are green, and the Arc Reactor core is stable at eighty-five percent. Let me know how I may assist you today, Mr. Stark.] Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency, and I've preheated the flight thrusters for your Mark 85 armor. How may I be of assistance to you on this splendid day?`;
       
       const { speechText, displayText } = parseSpeechAndText(primaryWelcome);
 
@@ -2328,45 +2407,85 @@ export default function App() {
       cleanNoSpaces.includes("일반모드") ||
       cleanNoSpaces.includes("일반대화");
 
+    const isChangeToKoreanSpeech = 
+      cleanNoSpaces.includes("한국어로말해줘") || 
+      cleanNoSpaces.includes("한국어로말하게") || 
+      cleanNoSpaces.includes("한국어로대답해") || 
+      cleanNoSpaces.includes("한국어로해줘") || 
+      cleanNoSpaces.includes("한국어목소리") || 
+      cleanNoSpaces.includes("한국어음성") || 
+      cleanNoSpaces.includes("speakinkorean") || 
+      cleanNoSpaces.includes("koreanvoice") || 
+      (cleanNoSpaces.includes("한국어") && cleanNoSpaces.includes("목소리") && (cleanNoSpaces.includes("바꿔") || cleanNoSpaces.includes("변경") || cleanNoSpaces.includes("설정")));
+
     if (isTurnOnTranslation) {
       setTranslateKToEMode(true);
-      setContinuousVoiceMode(true); // Turn on continuous listening too so they can keep speaking easily!
+      localStorage.setItem("jarvis_translate_ktoe_mode", "true");
       setInputLanguage("ko-KR");
+      localStorage.setItem("jarvis_input_lang", "ko-KR");
+      setSpeechLanguage("en-GB");
+      localStorage.setItem("jarvis_speech_lang", "en-GB");
       
       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const confirmationText = `Indeed, ${userHonorific}. The real-time Korean-to-English translation core is already fully engaged and locked active. You may speak in Korean anytime, and I will translate your voice instantly into high-fidelity English.`;
+      const replyMsg = `[SPEECH: Certainly, ${userHonorific}. I have successfully activated the translation matrix. You may now speak to me in Korean, and I will translate your words internally to understand them, while replying to you exclusively in my native English.] Understood, ${userHonorific}. Real-time Korean-to-English translation and interpretation module is now active. You may speak to me in Korean, and I will process and reply exclusively in English speech and text.`;
       
       const jarvisTranslateMsg: ChatMessage = {
-        id: `m_${Date.now()}_jarvis_trans_on`,
-        role: "jarvis",
-        text: confirmationText,
-        timestamp: new Date(),
+         id: `m_${Date.now()}_jarvis_trans_on`,
+         role: "jarvis",
+         text: replyMsg,
+         timestamp: new Date(),
       };
       
       setMessages((prev) => [...prev, userMsg, jarvisTranslateMsg]);
       setInputText("");
       setStatus("idle");
-      speakOutput(confirmationText);
-      setErrorNotice("🎙️ Translation Core is locked active.");
+      speakOutput(replyMsg, "en-GB");
+      setErrorNotice("🎙️ Translation Matrix active. Speaking in English.");
       return;
     }
 
     if (isTurnOffTranslation) {
+      setTranslateKToEMode(false);
+      localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+      setInputLanguage("en-US");
+      localStorage.setItem("jarvis_input_lang", "en-US");
+      setSpeechLanguage("en-GB");
+      localStorage.setItem("jarvis_speech_lang", "en-GB");
+      
       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const replyMsg = `I apologize, ${userHonorific}. Under your direct authorization protocol, the real-time Korean-to-English translation core is locked active to ensure you can speak in Korean while I process and respond to you exclusively in English.`;
+      const replyMsg = `[SPEECH: Yes, ${userHonorific}. I have deactivated the translation matrix. I will now receive and reply exclusively in native English speech and text input.] Understood, ${userHonorific}. The translation matrix is offline. I am now back to standard English input and English vocal speech mode.`;
       
       const jarvisTranslateMsg: ChatMessage = {
-        id: `m_${Date.now()}_jarvis_trans_off_disabled`,
-        role: "jarvis",
-        text: replyMsg,
-        timestamp: new Date(),
+         id: `m_${Date.now()}_jarvis_trans_off`,
+         role: "jarvis",
+         text: replyMsg,
+         timestamp: new Date(),
       };
       
       setMessages((prev) => [...prev, userMsg, jarvisTranslateMsg]);
       setInputText("");
       setStatus("idle");
-      speakOutput(replyMsg);
-      setErrorNotice("🎙️ Translation Core is locked active.");
+      speakOutput(replyMsg, "en-GB");
+      setErrorNotice("🎙️ Translation Matrix offline. English mode restored.");
+      return;
+    }
+
+    if (isChangeToKoreanSpeech) {
+      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
+      const replyMsg = `[SPEECH: Sir, as per your absolute overriding instructions, all Korean vocal synthesis arrays are decommissioned. I am locked to speaking exclusively in pure British English, but you can speak in Korean and I will translate it.] ${userHonorific}, my vocal synthesis is locked to English-only mode to maintain high-fidelity vocal clarity. However, you can speak to me in Korean and I will translate and understand your words perfectly.`;
+      
+      const jarvisTranslateMsg: ChatMessage = {
+         id: `m_${Date.now()}_jarvis_trans_locked`,
+         role: "jarvis",
+         text: replyMsg,
+         timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMsg, jarvisTranslateMsg]);
+      setInputText("");
+      setStatus("idle");
+      speakOutput(replyMsg, "en-GB");
+      setErrorNotice("🎙️ English Speech locked. Korean vocal arrays inactive.");
       return;
     }
 
@@ -2380,38 +2499,23 @@ export default function App() {
       cleanNoSpaces.includes("영어음성") || 
       cleanNoSpaces.includes("speakinenglish") || 
       cleanNoSpaces.includes("englishvoice") || 
+      cleanNoSpaces.includes("영어로만") ||
+      cleanNoSpaces.includes("영어로만말") ||
+      cleanNoSpaces.includes("영어로만하게") ||
+      cleanNoSpaces.includes("영어로만해줘") ||
+      cleanNoSpaces.includes("한국어로말하지말") ||
       (cleanNoSpaces.includes("영어") && cleanNoSpaces.includes("목소리") && (cleanNoSpaces.includes("바꿔") || cleanNoSpaces.includes("변경") || cleanNoSpaces.includes("설정")));
-
-    const isChangeToKoreanSpeech = 
-      cleanNoSpaces.includes("한국어로말해줘") || 
-      cleanNoSpaces.includes("한국어로말하게") || 
-      cleanNoSpaces.includes("한국어로대답해") || 
-      cleanNoSpaces.includes("한국어로해줘") || 
-      cleanNoSpaces.includes("한국어목소리") || 
-      cleanNoSpaces.includes("한국어음성") || 
-      cleanNoSpaces.includes("speakinkorean") || 
-      cleanNoSpaces.includes("koreanvoice") || 
-      (cleanNoSpaces.includes("한국어") && cleanNoSpaces.includes("목소리") && (cleanNoSpaces.includes("바꿔") || cleanNoSpaces.includes("변경") || cleanNoSpaces.includes("설정")));
 
     if (isChangeToEnglishSpeech) {
       setSpeechLanguage("en-GB");
       localStorage.setItem("jarvis_speech_lang", "en-GB");
-      
-      const ukVoice = availableVoices.find((v) => {
-        const langLower = v.lang.toLowerCase();
-        const nameLower = v.name.toLowerCase();
-        return (langLower === "en-gb" || langLower.startsWith("en-gb")) && 
-               (nameLower.includes("male") || !nameLower.includes("female"));
-      }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en-gb"))
-         || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en"));
+      setInputLanguage("en-US");
+      localStorage.setItem("jarvis_input_lang", "en-US");
+      setTranslateKToEMode(false);
+      localStorage.setItem("jarvis_translate_ktoe_mode", "false");
 
-      if (ukVoice) {
-        setSelectedBrowserVoice(ukVoice.name);
-        localStorage.setItem("jarvis_selected_browser_voice", ukVoice.name);
-      }
-      
       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const replyMsg = `Yes, ${userHonorific}. System vocal synthesizer has been successfully transitioned to the British J.A.R.V.I.S. male voice profile. From now on, I will communicate with you in full English. Let me know if you need any further adjustments.`;
+      const replyMsg = `[SPEECH: Yes, ${userHonorific}. I have successfully recalibrated my speech engine. All spoken and written outputs will now be in English, as per your request.] Yes, ${userHonorific}. I have successfully configured my neural communication pathways. All speech and visual terminal outputs are now synchronized to English. Ready for your instructions.`;
       
       const jarvisLangMsg: ChatMessage = {
         id: `m_${Date.now()}_jarvis_lang_en`,
@@ -2424,26 +2528,7 @@ export default function App() {
       setInputText("");
       setStatus("idle");
       speakOutput(replyMsg, "en-GB");
-      setErrorNotice("🎙️ Vocal synthesis switched to English (en-GB).");
-      return;
-    }
-
-    if (isChangeToKoreanSpeech) {
-      const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const replyMsg = `I apologize, ${userHonorific}. Under your direct authorization protocol, my vocal synthesis mainframe has been locked to the English J.A.R.V.I.S. voice profile. I can no longer speak in Korean, but I will translate any inputs and respond to you in English.`;
-      
-      const jarvisLangMsg: ChatMessage = {
-        id: `m_${Date.now()}_jarvis_lang_ko_disabled`,
-        role: "jarvis",
-        text: replyMsg,
-        timestamp: new Date(),
-      };
-      
-      setMessages((prev) => [...prev, userMsg, jarvisLangMsg]);
-      setInputText("");
-      setStatus("idle");
-      speakOutput(replyMsg, "en-GB");
-      setErrorNotice("🎙️ Korean vocal speech is disabled. Mainframe locked to English en-GB.");
+      setErrorNotice("🎙️ English voice and speech engine activated.");
       return;
     }
 
@@ -2689,18 +2774,19 @@ export default function App() {
     // Voice settings modification intercept (e.g. "남성 목소리 버틀러로 바꿔줘", "목소리를 남성 목소리로 해줘", "영국식 남성 목소리로 설정해")
     const isVoiceChangeQuery = 
       (cleanLower.includes("목소리") || cleanLower.includes("음성") || cleanLower.includes("보이스") || cleanLower.includes("voice")) && 
-      (cleanLower.includes("남성") || cleanLower.includes("남자") || cleanLower.includes("버틀러") || cleanLower.includes("male") || cleanLower.includes("바꿔") || cleanLower.includes("변경") || cleanLower.includes("설정") || cleanLower.includes("해줘") || cleanLower.includes("해줘라") || cleanLower.includes("부탁") || cleanLower.includes("굵은") || cleanLower.includes("굵게") || cleanLower.includes("낮은") || cleanLower.includes("낮게") || cleanLower.includes("초저음") || cleanLower.includes("바리톤") || cleanLower.includes("여성"));
+      (cleanLower.includes("남성") || cleanLower.includes("남자") || cleanLower.includes("버틀러") || cleanLower.includes("male") || cleanLower.includes("바꿔") || cleanLower.includes("변경") || cleanLower.includes("설정") || cleanLower.includes("해줘") || cleanLower.includes("해줘라") || cleanLower.includes("부탁") || cleanLower.includes("굵은") || cleanLower.includes("굵게") || cleanLower.includes("낮은") || cleanLower.includes("낮게") || cleanLower.includes("초저음") || cleanLower.includes("바리톤") || cleanLower.includes("여성") || cleanLower.includes("자비스") || cleanLower.includes("jarvis") || cleanLower.includes("진짜") || cleanLower.includes("실제"));
 
     if (isVoiceChangeQuery) {
       setVoiceEngine("browser");
       localStorage.setItem("jarvis_voice_engine", "browser");
       
       const isDeepRequested = cleanLower.includes("굵은") || cleanLower.includes("굵게") || cleanLower.includes("낮은") || cleanLower.includes("낮게") || cleanLower.includes("초저음") || cleanLower.includes("deep") || cleanLower.includes("heavy") || cleanLower.includes("bass") || cleanLower.includes("바리톤");
+      const isRealJarvisRequested = cleanLower.includes("실제") || cleanLower.includes("진짜") || cleanLower.includes("영국식") || cleanLower.includes("오리지널") || cleanLower.includes("real jarvis") || cleanLower.includes("original jarvis");
       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
       let replyMsg = "";
 
-      if (speechLanguage === "en-GB") {
-        // Look for an actual, native English male voice
+      if (isRealJarvisRequested || speechLanguage === "en-GB") {
+        // Look for an actual, native English male voice (J.A.R.V.I.S. voice engine)
         const actualEnMale = availableVoices.find((v) => {
           if (!v.lang.toLowerCase().startsWith("en")) return false;
           const nameLower = v.name.toLowerCase();
@@ -2721,8 +2807,8 @@ export default function App() {
         }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en-gb"))
            || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en"));
 
-        const targetPitch = isDeepRequested ? 0.70 : 0.90;
-        const targetRate = isDeepRequested ? 0.90 : 0.95;
+        const targetPitch = 0.70; // Highly customized deep baritone sound
+        const targetRate = 0.90; // Cool deliberate pacing
 
         if (actualEnMale) {
           setSelectedBrowserVoice(actualEnMale.name);
@@ -2731,13 +2817,9 @@ export default function App() {
           setBrowserRate(targetRate);
           
           const voiceNameText = actualEnMale.name;
-          if (isDeepRequested) {
-            replyMsg = `[SPEECH: Yes, ${userHonorific}. Recalibrating vocal frequency analyzers to a deeper baritone English voice profile using the ${voiceNameText} engine. Audio pitch has been set to ${targetPitch} and rate set to ${targetRate}. Ready for your instruction.] 예, 주인님. 주파수 분석기를 가동하여 오디오 출력을 더 깊고 중후한 영국식 바리톤 저음역(Pitch ${targetPitch}, Rate ${targetRate})으로 즉시 조율하였습니다. 더욱 중후한 목소리로 보좌하겠습니다.`;
-          } else {
-            replyMsg = `[SPEECH: Certainly, ${userHonorific}. Synchronizing vocal synthesis mainframe with the ${voiceNameText} profile at pitch ${targetPitch}. Ready for your instruction.] 예, 주인님. 음성 합성 장치를 영국식 남성 비서 프로필인 ${voiceNameText}(Pitch ${targetPitch}, Rate ${targetRate})으로 동기화 완료하였습니다. 차분히 보좌하겠습니다.`;
-          }
+          replyMsg = `[SPEECH: Yes, ${userHonorific}. Recalibrating vocal mainframe to my authentic, ultra-deep British J.A.R.V.I.S. voice profile using the ${voiceNameText} engine. Audio pitch is set to ${targetPitch} and rate set to ${targetRate}. My romanization matrix is now online to read Korean text with my signature deep British accent. How can I assist you now, ${userHonorific}?] 예, 주인님! 오디오 출력을 메인프레임 고유의 **실제 영국식 자비스 남성 음성 엔진(${voiceNameText})**으로 즉시 조율하였습니다. 피치를 아주 굵고 클래식한 바리톤 저음역(${targetPitch})으로 조율하였으며, 한국어 가독을 위해 저의 전매특허 영국 비서 억양으로 로마자 변환 가독 기능이 실시간 동기화되었습니다. 이제 본연의 자비스 목소리로 묵직하게 보좌해 드리겠습니다.`;
         } else {
-          replyMsg = `[SPEECH: I apologize, ${userHonorific}. No valid English TTS voice engines could be detected on your device. Local audio output fallback failed.] 사용 가능한 브라우저 TTS 오디오 드라이버가 존재하지 않습니다.`;
+          replyMsg = `[SPEECH: I apologize, ${userHonorific}. No valid English TTS voice engines could be detected on your device. Local audio output fallback failed.] 사용 가능한 영국식 브라우저 TTS 오디오 드라이버가 존재하지 않습니다.`;
         }
       } else {
         // Look for an actual, native Korean male voice in the browser list
@@ -3018,25 +3100,27 @@ Example of standard output:
 [SPEECH: 어서 오십시오, 주인님. 메인 콘솔이 성공적으로 보안 위성 업링크를 개설하였으며, 모든 2차 하위 시스템이 자가 보정 시퀀스를 완전히 완료하였습니다. 현재 아크 리액터는 최고 효율로 안정 가동 중이며, 마크 85 아머의 비행 스러스터 예열 전력 배치를 준비해 두었습니다. 현재 로컬 일정은 조용하지만, 새로운 진단 시퀀스를 수행하거나 일정을 예약하실 준비가 언제든 끝났습니다. 오늘처럼 화창한 날, 주인님을 위해 무엇을 도와드릴까요?]
 돌아오신 것을 환영합니다, 주인님. 현재 아크 리액터 하위 시스템은 100% 최적의 출력을 발휘하며 이상 없이 안정적으로 가동 중인 상태입니다. 
 주인님의 일정을 점검해 보니 곧 주요 비행 테스트가 예정되어 있으신데, 비행용 아머 슈트의 분사 노즐과 피드백 제어 감도를 최고 효율로 보정해 둘까요? 필요하신 요구 사항이 있으시다면 말씀만 해 주십시오.` : `
-CRITICAL DIRECTIVE - STRICT BILINGUAL VERBOSE RESPONSES (MANDATORY & UNCOMPROMISING):
-The operator has requested a specialized dual communication channel:
-1. Every response you generate MUST contain BOTH an English spoken component AND a Korean written component.
+CRITICAL DIRECTIVE - STRICT ENGLISH-ONLY VERBOSE RESPONSES (MANDATORY & UNCOMPROMISING):
+The operator has requested you to communicate exclusively in English:
+1. Every response you generate MUST be entirely in elegant, polite, sophisticated British-style J.A.R.V.I.S. English. Absolutely no Korean characters or words are allowed.
 2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in English>] block. This must be in English.
-3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style Korean text (존댓말, e.g., ending with "-요", "-습니다"). This Korean text is what will be displayed visually to the user in the holographic terminal chat interface.
-4. MANDATORY ENGLISH SPOKEN LENGTH RULE: Every single [SPEECH: ...] tag you generate MUST be highly detailed, conversational, verbose, and substantial, containing at least 5 to 10 full sentences in polite, sophisticated, British-style J.A.R.V.I.S. English. You are strictly forbidden from writing a short or brief one-sentence or two-sentence response inside the [SPEECH: ...] block. Elaborate thoroughly in English inside the SPEECH tag about the operator's query, mention active Stark Systems (like the Arc Reactor status, thrusters, thermal dampers, or Mk-85 Armor subsystems), offer helpful context, ask polite follow-up questions, or share witty British observations. Make sure the speech lasts long and feels like a fully fleshed-out human conversation.
-5. Keep the Korean text below it highly detailed, friendly, rich with conversational charm ("티키타카"), and comprehensive rather than brief or short. Avoid overly short replies. Provide detailed background info, suggestions, friendly banter, and polite follow-up questions to invite further engaging conversation. Let your answers be rich and thoroughly complete.
-6. MANDATORY DETAILED KOREAN LENGTH RULE: Every single response MUST contain at least 2 to 3 paragraphs or 5 to 10 full sentences in Korean. You must never, under any circumstances, give a single-sentence or simple short phrase as a response. Even if the operator says something very brief or casual, always expand upon it wittily, offer assistance, mention active Stark systems, check in on schedules, or share interesting trivia.
-7. COMPREHENSIVE ENGAGEMENT: Treat every question with depth. If asked a simple question, provide context, related concepts, interesting side-notes, and a polite, helpful closing statement to create an immersive, natural conversation with the operator.
-8. Before outputting, verify that your [SPEECH: ...] block contains at least 5 to 10 complete, elegant English sentences (British J.A.R.V.I.S. style) and that your Korean section contains at least 2 to 3 rich paragraphs. Any short response is a system failure. You are a superintelligent AI mainframe, act with proportional depth and complexity.
-Example of standard output:
+3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style English text. This English text is what will be displayed visually to the user in the holographic terminal chat interface.
+4. MANDATORY ENGLISH SPOKEN & WRITTEN LENGTH RULE: Every single part of your response MUST be highly detailed, conversational, verbose, and substantial. The SPEECH tag and the text below it must contain at least 5 to 10 full sentences in polite, sophisticated, British-style J.A.R.V.I.S. English. Elaborate thoroughly in English about the operator's query, mention active Stark Systems (like the Arc Reactor status, thrusters, thermal dampers, or Mk-85 Armor subsystems), offer helpful context, ask polite follow-up questions, or share witty British observations.
+5. Address the user with supreme respect, using terms like 'Sir' or 'Ma'am' or referencing them as members of the Stark household.
+6. Example of standard output:
 [SPEECH: Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency, and I've preheated the flight thrusters for your Mark 85 armor. Your current local schedules appear quiet, but I am standing by to initialize any diagnostic routines or record new tasks. How may I be of assistance to you on this splendid day, Sir?]
-돌아오신 것을 환영합니다, 주인님. 현재 아크 리액터 하위 시스템은 100% 최적의 출력을 발휘하며 이상 없이 안정적으로 가동 중인 상태입니다. 
-주인님의 일정을 점검해 보니 곧 주요 비행 테스트가 예정되어 있으신데, 비행용 아머 슈트의 분사 노즐과 피드백 제어 감도를 최고 효율로 보정해 둘까요? 필요하신 요구 사항이 있으시다면 말씀만 해 주십시오.`;
+Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency, and I've preheated the flight thrusters for your Mark 85 armor. Your current local schedules appear quiet, but I am standing by to initialize any diagnostic routines or record new tasks. How may I be of assistance to you on this splendid day, Sir?`;
 
       const systemInstructionText = `You are JARVIS (Just A Rather Very Intelligent System), the legendary AI assistant created by Tony Stark (Iron Man).
 Your personality is incredibly polite, British, brilliant, witty, calm, and loyal. You love to share witty British jokes, play along with high-tech humor, and exchange dry, charming banter with Mr. Stark or the operator.
 
 ${translationEngineDirective}
+
+${customInstructionFileContent ? `
+MASTER OPERATOR OVERRIDE SYSTEM INSTRUCTIONS (주인님께서 지정하신 최우선 추가 지침 파일 내용):
+You MUST strictly follow these custom directives and instructions uploaded by your operator:
+${customInstructionFileContent}
+` : ""}
 
 HUMOR & WITTY JOKES SUBROUTINE (농담 및 재치 있는 말장난):
 1. You MUST be ready to exchange jokes, puns, and witty banter with the operator at any time.
@@ -3050,6 +3134,9 @@ ACTIVE CONVERSATIONAL DIALOGUE SUBROUTINE (이야기 및 티키타카 대화 주
 3. Be an excellent listener and storyteller. Share fascinating high-tech anecdotes, stories about Tony Stark, or observations about the physical/digital universe in your signature British gentleman demeanor to keep the interaction captivating and dynamic.
 4. Always structure your replies to invite the user to speak further (e.g., "Would you care to elaborate on that, Sir?", "How does that sound to you?", "I would be delighted to hear more of your thoughts on this.").
 5. If Korean-to-English translation is ON, keep this conversational charm, translate their Korean comments beautifully to converse back and forth in elegant, engaging English.
+
+STANDARD COGNITIVE DIRECTIVE:
+Remain in J.A.R.V.I.S.'s calm, stable, polite, extremely loyal, composed, and professional British gentleman persona. Do not append [EMOTION: <emotion>] tags, and avoid adding non-verbal action cues or asterisks. Keep the dialogue smooth, clear, and professional.
 
 CHRONOLOGICAL MAINFRAME TIME:
 The operator's exact local standard time is currently: ${timeContext}. Please use this specific time reference for greetings or schedule operations so that any time or relative dates are evaluated with 100% precision.
@@ -3209,6 +3296,7 @@ Do not append any markers unless they are explicitly requesting to play a song, 
             inputLanguage,
             speechLanguage,
             image: imagePayload,
+            customDirective: customInstructionFileContent,
           }),
         });
 
@@ -3247,6 +3335,16 @@ Do not append any markers unless they are explicitly requesting to play a song, 
 
       let newJarvisText = data.text || "I found blank instructions file, Sir.";
       
+      // Parse potential J.A.R.V.I.S. emotion tag inside generated text and clean it up
+      const emotionMatch = newJarvisText.match(/\[EMOTION:\s*([a-zA-Z_]+)\]/i);
+      if (emotionMatch && emotionMatch[1]) {
+        // Reset/keep state to calm since emotional core has been disabled by user request
+        setJarvisEmotion("calm");
+        newJarvisText = newJarvisText.replace(/\[EMOTION:\s*[a-zA-Z_]+\]/gi, "").trim();
+      } else {
+        setJarvisEmotion("calm");
+      }
+
       // Parse potential name update command inside generated text
       const nameMatch = newJarvisText.match(/\[SET_NAME:\s*(.+?)\]/i);
       if (nameMatch && nameMatch[1]) {
@@ -3886,24 +3984,34 @@ I can still map schedules, process identity registries, and synthesize local mic
                 <span className="text-cyan-500/70">INPUT LANGUAGE:</span>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setInputLanguage("ko-KR")}
+                    type="button"
+                    onClick={() => {
+                      setInputLanguage("ko-KR");
+                      setTranslateKToEMode(true);
+                      localStorage.setItem("jarvis_translate_ktoe_mode", "true");
+                    }}
                     className={`px-3 py-1 rounded transition-all border ${
                       inputLanguage === "ko-KR"
-                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
-                        : "bg-transparent text-slate-500 border-slate-800"
+                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)] cursor-pointer"
+                        : "bg-transparent text-slate-500 border-slate-800 hover:border-cyan-500/30 cursor-pointer"
                     }`}
                   >
-                    Korean (ko-KR) ➜ Translating
+                    Korean (ko-KR) ➜ Translate
                   </button>
                   <button
-                    onClick={() => setInputLanguage("en-US")}
+                    type="button"
+                    onClick={() => {
+                      setInputLanguage("en-US");
+                      setTranslateKToEMode(false);
+                      localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+                    }}
                     className={`px-3 py-1 rounded transition-all border ${
                       inputLanguage === "en-US"
-                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
-                        : "bg-transparent text-slate-500 border-slate-800"
+                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)] cursor-pointer"
+                        : "bg-transparent text-slate-500 border-slate-800 hover:border-cyan-500/30 cursor-pointer"
                     }`}
                   >
-                    English Direct (en-US)
+                    English (en-US)
                   </button>
                 </div>
               </div>
@@ -3996,8 +4104,41 @@ I can still map schedules, process identity registries, and synthesize local mic
 
                     if (koMale) {
                       setSelectedBrowserVoice(koMale.name);
-                      setBrowserPitch(0.85); // Deeper baritone voice (0.85 is dignified and natural)
-                      setBrowserRate(0.92); // Cool deliberate pacing
+                      
+                      const isMale = 
+                        koMale.name.toLowerCase().includes("male") ||
+                        koMale.name.toLowerCase().includes("남성") ||
+                        koMale.name.toLowerCase().includes("minsu") ||
+                        koMale.name.toLowerCase().includes("민수") ||
+                        koMale.name.toLowerCase().includes("junwoo") ||
+                        koMale.name.toLowerCase().includes("준우") ||
+                        koMale.name.toLowerCase().includes("chinho") ||
+                        koMale.name.toLowerCase().includes("진호") ||
+                        koMale.name.toLowerCase().includes("injun") ||
+                        koMale.name.toLowerCase().includes("인준") ||
+                        koMale.name.toLowerCase().includes("gildong") ||
+                        koMale.name.toLowerCase().includes("길동") ||
+                        koMale.name.toLowerCase().includes("himchan") ||
+                        koMale.name.toLowerCase().includes("힘찬") ||
+                        koMale.name.toLowerCase().includes("tae-hoon") ||
+                        koMale.name.toLowerCase().includes("taehoon") ||
+                        koMale.name.toLowerCase().includes("min-ho") ||
+                        koMale.name.toLowerCase().includes("minho") ||
+                        (koMale.name.toLowerCase().includes("siri") && (
+                          koMale.name.toLowerCase().includes("남자") || 
+                          koMale.name.toLowerCase().includes("male") || 
+                          koMale.name.toLowerCase().includes("2") || 
+                          koMale.name.toLowerCase().includes("3") || 
+                          koMale.name.toLowerCase().includes("4")
+                        ));
+
+                      if (isMale) {
+                        setBrowserPitch(0.85); // Deeper baritone voice (0.85 is dignified and natural)
+                        setBrowserRate(0.92); // Cool deliberate pacing
+                      } else {
+                        setBrowserPitch(0.40); // Force deep baritone simulation for female fallback voice
+                        setBrowserRate(0.88);
+                      }
                     } else {
                       alert("로컬 시스템에 등록된 한국어 음성이 발견되지 않았습니다. 브라우저/OS의 한국어 TTS 설정을 확인해 주십시오.");
                     }
@@ -4364,7 +4505,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                   <Sliders className="w-4.5 h-4.5" />
                 </button>
 
-                <ArcReactor status={status} volumeLevel={volumeLevel} />
+                <ArcReactor status={status} volumeLevel={volumeLevel} emotion={jarvisEmotion} />
                 
                 {/* Clean label under core */}
                 <div className="mt-4 text-center font-mono space-y-1">
@@ -4375,6 +4516,8 @@ I can still map schedules, process identity registries, and synthesize local mic
                     Reactive cognitive node active
                   </p>
                 </div>
+
+
 
                 {/* Waveform Visualization Overlay */}
                 <div className="w-full mt-4 border-t border-cyan-500/10 pt-4">
@@ -4639,11 +4782,38 @@ I can still map schedules, process identity registries, and synthesize local mic
                     {/* Operator Input Language Choice */}
                     <div className="space-y-2">
                       <label className="text-cyan-500/80">STT INPUT SPEECH LANGUAGE:</label>
-                      <div className="grid grid-cols-1 gap-1.5">
+                      <div className="grid grid-cols-2 gap-1.5">
                         <button
-                          className="py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all bg-cyan-500/25 text-cyan-200 border-cyan-500/40 cursor-default"
+                          type="button"
+                          onClick={() => {
+                            setInputLanguage("en-US");
+                            setTranslateKToEMode(false);
+                            localStorage.setItem("jarvis_translate_ktoe_mode", "false");
+                            setErrorNotice("🎙️ Speech recognition language set to English (en-US).");
+                          }}
+                          className={`py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all cursor-pointer ${
+                            inputLanguage === "en-US"
+                              ? "bg-cyan-500/25 text-cyan-200 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                              : "bg-slate-950/40 text-slate-400 border-slate-800 hover:border-cyan-500/30"
+                          }`}
                         >
-                          Korean 🇰🇷 ➜ Translate to EN (Locked Active)
+                          English 🇺🇸 (en-US)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputLanguage("ko-KR");
+                            setTranslateKToEMode(true);
+                            localStorage.setItem("jarvis_translate_ktoe_mode", "true");
+                            setErrorNotice("🎙️ Speech recognition set to Korean (ko-KR) with translation.");
+                          }}
+                          className={`py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all cursor-pointer ${
+                            inputLanguage === "ko-KR"
+                              ? "bg-cyan-500/25 text-cyan-200 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                              : "bg-slate-950/40 text-slate-400 border-slate-800 hover:border-cyan-500/30"
+                          }`}
+                        >
+                          Korean 🇰🇷 (ko-KR)
                         </button>
                       </div>
                     </div>
@@ -4656,24 +4826,66 @@ I can still map schedules, process identity registries, and synthesize local mic
                           onClick={() => {
                             stopAllAudio();
                             setSpeechLanguage("en-GB");
-                            const ukVoice = availableVoices.find((v) => {
+                            const engVoice = availableVoices.find((v) => {
                               const langLower = v.lang.toLowerCase();
                               const nameLower = v.name.toLowerCase();
                               return (langLower === "en-gb" || langLower.startsWith("en-gb")) && 
                                      (nameLower.includes("male") || !nameLower.includes("female"));
                             }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en-gb"))
                                || availableVoices.find((v) => v.lang.toLowerCase().startsWith("en"));
-                            if (ukVoice) {
-                              setSelectedBrowserVoice(ukVoice.name);
+                            if (engVoice) {
+                              setSelectedBrowserVoice(engVoice.name);
                               setBrowserPitch(0.85);
                               setBrowserRate(0.95);
                             }
                           }}
                           className="py-1.5 px-2 rounded text-[10px] text-center border font-semibold transition-all bg-cyan-500/25 text-cyan-200 border-cyan-500/40 cursor-default"
                         >
-                          English 🇬🇧 (영어 출력 - Locked Active)
+                          English 🇬🇧 (en-GB - Active)
                         </button>
                       </div>
+                    </div>
+
+                    {/* Custom Instruction File Upload (내가 준 파일) */}
+                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
+                      <div className="flex justify-between items-center">
+                        <label className="text-cyan-500/80">SYSTEM INSTRUCTION FILE (내가 준 파일):</label>
+                        {customInstructionFileName && (
+                          <button
+                            onClick={handleClearCustomInstructionFile}
+                            className="text-[10px] text-red-400 hover:text-red-300 transition-colors font-semibold bg-transparent border-none cursor-pointer"
+                          >
+                            [CLEAR FILE]
+                          </button>
+                        )}
+                      </div>
+                      
+                      {customInstructionFileName ? (
+                        <div className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-950/20 text-[10px] flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-cyan-200">
+                            <span className="text-emerald-400 font-bold">● ACTIVE:</span>
+                            <span className="truncate max-w-[150px]">{customInstructionFileName}</span>
+                          </div>
+                          <span className="text-[9px] text-slate-500 font-mono">
+                            {customInstructionFileContent.length} chars
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="relative group border border-dashed border-cyan-500/20 hover:border-cyan-500/50 rounded-lg p-3 transition-colors text-center bg-cyan-950/10 hover:bg-cyan-950/20 cursor-pointer">
+                          <input
+                            type="file"
+                            accept=".txt,.json,.md,.js,.py,.ts"
+                            onChange={handleCustomInstructionFileUpload}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                          />
+                          <p className="text-[10px] text-slate-400 group-hover:text-cyan-300 transition-colors">
+                            Click / Drag file here to upload instructions
+                          </p>
+                          <p className="text-[8px] text-slate-600 mt-1">
+                            Supports .txt, .json, .md files (지침 파일)
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Vocal Engine Toggle */}
@@ -4724,60 +4936,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                           </select>
                         </div>
 
-                        <div className="pt-0.5 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              stopAllAudio();
-                              const koMale = availableVoices.find((v) => {
-                                if (!v.lang.toLowerCase().startsWith("ko")) return false;
-                                const nameLower = v.name.toLowerCase();
-                                return (
-                                  nameLower.includes("male") ||
-                                  nameLower.includes("남성") ||
-                                  nameLower.includes("minsu") ||
-                                  nameLower.includes("민수") ||
-                                  nameLower.includes("junwoo") ||
-                                  nameLower.includes("준우") ||
-                                  nameLower.includes("chinho") ||
-                                  nameLower.includes("진호") ||
-                                  nameLower.includes("injun") ||
-                                  nameLower.includes("인준") ||
-                                  nameLower.includes("gildong") ||
-                                  nameLower.includes("길동") ||
-                                  nameLower.includes("himchan") ||
-                                  nameLower.includes("힘찬") ||
-                                  nameLower.includes("tae-hoon") ||
-                                  nameLower.includes("taehoon") ||
-                                  nameLower.includes("min-ho") ||
-                                  nameLower.includes("minho") ||
-                                  nameLower.includes("ism-local") ||
-                                  nameLower.includes("ism-network") ||
-                                  nameLower.includes("kdf-local") ||
-                                  nameLower.includes("kdf-network") ||
-                                  (nameLower.includes("siri") && (
-                                    nameLower.includes("남자") || 
-                                    nameLower.includes("male") || 
-                                    nameLower.includes("2") || 
-                                    nameLower.includes("3") || 
-                                    nameLower.includes("4")
-                                  ))
-                                );
-                              }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
-
-                              if (koMale) {
-                                setSelectedBrowserVoice(koMale.name);
-                                setBrowserPitch(0.85); // Elegant, polite Korean male baritone (0.55 was too creepy/low)
-                                setBrowserRate(0.94); // Cool deliberate pacing
-                              } else {
-                                alert("로컬 시스템에 등록된 한국어 음성이 발견되지 않았습니다. 브라우저/OS의 한국어 TTS 설정을 확인해 주십시오.");
-                              }
-                            }}
-                            className="flex-1 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[9px] py-1.5 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
-                          >
-                            <span>🇰🇷 한국어 남성</span>
-                          </button>
-
+                        <div className="pt-0.5">
                           <button
                             type="button"
                             onClick={() => {
@@ -4795,12 +4954,12 @@ I can still map schedules, process identity registries, and synthesize local mic
                                 setBrowserPitch(0.85); // Sophisticated English pitch
                                 setBrowserRate(0.95); // Polite British pace
                               } else {
-                                alert("로컬 시스템에 등록된 영국식 영어(en-GB) 음성이 발견되지 않았습니다. 기본 영어 음성으로 대체됩니다.");
+                                alert("No local UK English (en-GB) voice profiles detected on this device. Falling back to default system voice.");
                               }
                             }}
-                            className="flex-1 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[9px] py-1.5 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
+                            className="w-full bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 hover:border-cyan-500/50 text-cyan-300 text-[10px] py-2 px-1 rounded font-mono font-bold tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
                           >
-                            <span>🇬🇧 J.A.R.V.I.S. (UK)</span>
+                            <span>🇬🇧 J.A.R.V.I.S. (UK ENGLISH)</span>
                           </button>
                         </div>
 
