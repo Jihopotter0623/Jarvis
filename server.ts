@@ -256,8 +256,22 @@ async function startServer() {
         ? `The operator's exact local standard time is currently: ${userLocalTime}. Please use this specific time reference for greetings or schedule operations so that any time or relative dates are evaluated with 100% precision.`
         : `System mainframe UTC time: ${new Date().toISOString()}.`;
 
+      const isKoreanSpeech = speechLanguage === "ko-KR";
       const isTranslateKToE = translateKToEMode === true || translateKToEMode === "true";
-      const translationEngineDirective = isTranslateKToE ? `
+
+      let translationEngineDirective = "";
+      if (isKoreanSpeech) {
+        translationEngineDirective = `
+CRITICAL DIRECTIVE - EXCLUSIVE POLITE KOREAN RESPONSES (MANDATORY & UNCOMPROMISING):
+The operator has selected Korean Vocal Speech Mode (Injun Preset active). You must strictly follow these rules:
+1. Every response you generate MUST be written in elegant, polite, and extremely respectful J.A.R.V.I.S.-style Korean (주인님/의원님 극존칭 및 정중한 자비스식 말투).
+2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in Korean>] block. This must be in sophisticated, polite Korean.
+3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style Korean text. This is what will be displayed visually to the user.
+4. Keep the Korean tone perfectly natural, extremely polite, and full of witty, loyal butler charm ("~하십시오", "~입니다", "~하옵니다").
+5. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 2 elegant sentences each). Avoid listing unnecessary systems or long-winded paragraphs unless the operator explicitly requests deep diagnostics. This minimizes response latency.
+`;
+      } else if (isTranslateKToE) {
+        translationEngineDirective = `
 CRITICAL DIRECTIVE - KOREAN-TO-ENGLISH REAL-TIME TRANSLATION & INTELLIGENCE MODE (MANDATORY):
 The operator is speaking/inputting in Korean, but J.A.R.V.I.S. must understand, translate, and respond EXCLUSIVELY in elegant, sophisticated British English.
 1. The operator's message will be in Korean. You must interpret and translate it internally to understand the request perfectly.
@@ -266,18 +280,21 @@ The operator is speaking/inputting in Korean, but J.A.R.V.I.S. must understand, 
 4. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style English text.
 5. Keep the English tone perfectly natural, extremely polite, and full of witty, loyal butler charm. Do not make it sound mechanical or repetitive.
 6. Even though the operator speaks Korean, you must reply exclusively in English so that J.A.R.V.I.S.'s authentic British voice is preserved.
-7. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 3 elegant sentences each). Avoid listing unnecessary Stark systems or adding long-winded paragraphs unless the operator explicitly requests deep diagnostics or detailed analyses. This minimizes response latency.
-` : `
+7. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 2 elegant sentences each). Avoid listing unnecessary Stark systems or adding long-winded paragraphs unless the operator explicitly requests deep diagnostics or detailed analyses. This minimizes response latency.
+`;
+      } else {
+        translationEngineDirective = `
 CRITICAL DIRECTIVE - EXCLUSIVE POLITE ENGLISH RESPONSES (MANDATORY & UNCOMPROMISING):
 The operator has requested exclusive communication in English. You must strictly follow these rules:
 1. Every response you generate MUST contain ONLY English. Under no circumstances should you generate any Korean words or sentences.
 2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in English>] block. This must be in sophisticated, polite British English, adopting J.A.R.V.I.S.'s signature calm, witty, and loyal British gentleman butler personality.
 3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style English text. This English text is what will be displayed visually to the user in the holographic terminal chat interface.
 4. Keep the English tone perfectly natural, extremely polite, and full of witty, loyal butler charm. Do not make it sound mechanical or repetitive. Speak in a fluent, natural conversational flow.
-5. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 3 elegant sentences each). Avoid listing unnecessary Stark systems or adding long-winded paragraphs unless the operator explicitly requests deep diagnostics or detailed analyses. This minimizes response latency.
+5. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 2 elegant sentences each). Avoid listing unnecessary Stark systems or adding long-winded paragraphs unless the operator explicitly requests deep diagnostics or detailed analyses. This minimizes response latency.
 Example of standard output:
-[SPEECH: Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency. How may I assist you today, Sir?]
-Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency. How may I be of assistance to you on this splendid day, Sir.`;
+[SPEECH: Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all systems are nominal. How may I assist you today, Sir?]
+Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all systems are nominal. How may I be of assistance to you today, Sir.`;
+      }
 
       const systemInstruction = `You are JARVIS (Just A Rather Very Intelligent System), the legendary AI assistant created by Tony Stark (Iron Man).
 Your personality is incredibly polite, British, brilliant, witty, calm, and loyal. You love to share witty British jokes, play along with high-tech humor, and exchange dry, charming banter with Mr. Stark or the operator.
@@ -317,7 +334,7 @@ When the operator uploads or presents a picture:
 4. If translation mode is ON, translate the final analyzed insights to English, else adapt your language polite- gentleman style of response.
 
 ACCURACY & DEPTH OPTIMIZATION DIRECTIVE:
-Provide highly accurate, explanatory, and beautifully detailed responses. Elaborate comprehensively, thoroughly, and with complete information, rather than being overly brief or rushed. Deliver rich, sophisticated, and insightful explanations fitting for a stellar super-intelligence, maintaining your signature J.A.R.V.I.S. demeanor.
+Provide highly accurate, polite, and beautifully concise responses. Keep your answers brief (ideally 1 to 2 sentences) and highly punchy unless the operator explicitly requests deep technical diagrams or detailed code/blueprint analysis. This ensures lightning-fast voice response speed and ultra-low latency.
 
 STARK MATHEMATICAL & PHYSICS SUBROUTINES DIRECTIVE:
 You possess complete master-level mathematical capability. When presented with mathematical formulas, algebraic equations, trigonometry, or calculus queries, you MUST:
@@ -337,7 +354,7 @@ When the operator provides any Python code or Pybricks code to analyze or simula
 
       // Korean Output Directive is replaced by the bilingual directive above.
 
-Keep your output natural for a voice assistant—conversational, highly detailed, fully descriptive, and avoid excessive markdown formatting (like asterisks, bolding, bullet-lists, or HTML tags) unless absolutely necessary. Be sure to elaborate with charming details.
+Keep your output natural for a voice assistant—conversational, extremely concise, brief (usually under 2 sentences), and avoid excessive markdown formatting. Do not output long lists or paragraphs unless explicitly asked, to keep the latency ultra-low.
 Always address the user with supreme respect, using terms like '${honorific}' or referencing them as members of the Stark household (current operator name: ${nameInSpeech}). You are running at 100% capacity.
 
 Active Schedule Synchronization Array:
@@ -424,7 +441,9 @@ Do not append any markers unless they are explicitly requesting to play a song, 
       // Format previous history into Gemini contents format
       const contents = [];
       if (history && Array.isArray(history)) {
-        for (const turn of history) {
+        // Trim history payload to the last 6 messages to optimize "thinking" latency
+        const trimmedHistory = history.slice(-6);
+        for (const turn of trimmedHistory) {
           // Skip any welcome message or system message to ensure first turn is "user"
           if (contents.length === 0 && turn.role !== "user") {
             continue; 
@@ -481,7 +500,7 @@ Do not append any markers unless they are explicitly requesting to play a song, 
 
       try {
         response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-3.1-flash-lite",
           contents: contents,
           config: {
             systemInstruction: systemInstruction,
@@ -492,10 +511,10 @@ Do not append any markers unless they are explicitly requesting to play a song, 
         if (isAuthError(firstErr)) {
           throw firstErr;
         }
-        console.warn("Primary model gemini-3.5-flash failed/overloaded, falling back to gemini-3.1-flash-lite...", firstErr.message || firstErr);
+        console.warn("Primary model gemini-3.1-flash-lite failed/overloaded, falling back to gemini-3.5-flash...", firstErr.message || firstErr);
         try {
           response = await aiClient.models.generateContent({
-            model: "gemini-3.1-flash-lite",
+            model: "gemini-3.5-flash",
             contents: contents,
             config: {
               systemInstruction: systemInstruction,
@@ -506,7 +525,7 @@ Do not append any markers unless they are explicitly requesting to play a song, 
           if (isAuthError(secondErr)) {
             throw secondErr;
           }
-          console.warn("Secondary model gemini-3.1-flash-lite overloaded, falling back to gemini-flash-latest...", secondErr.message || secondErr);
+          console.warn("Secondary model gemini-3.5-flash overloaded, falling back to gemini-flash-latest...", secondErr.message || secondErr);
           response = await aiClient.models.generateContent({
             model: "gemini-flash-latest",
             contents: contents,

@@ -45,12 +45,12 @@ export default function JarvisConsole({
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-cyan-500/10 text-xs font-mono text-cyan-400">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span>JARVIS COMMUNICATIONS MATRIX</span>
+          <span>자비스 메인프레임 통신 매트릭스</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="opacity-60 text-[10px]">ENGINE:</span>
+          <span className="opacity-60 text-[10px]">엔진:</span>
           <span className="uppercase text-[11px] font-semibold text-cyan-200">
-            {voiceEngine === "premium" ? "Neural Core (AI)" : voiceEngine === "browser" ? "Local Syn (Browser)" : "Muted"}
+            {voiceEngine === "premium" ? "인공지능 신경망 코어" : voiceEngine === "browser" ? "웹 브라우저 합성 엔진" : "음성 비활성화"}
           </span>
           {voiceEngine !== "silent" ? (
             <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
@@ -73,8 +73,8 @@ export default function JarvisConsole({
               className="h-full flex flex-col justify-center items-center text-center p-6 text-cyan-500/50 font-mono text-xs space-y-2 select-none"
             >
               <Cpu className="w-10 h-10 stroke-[1.2] animate-pulse mb-1" />
-              <p>Mainframe Online. Standing by for command inputs...</p>
-              <p className="text-[10px]">"Speak in English, Sir."</p>
+              <p>메인프레임 온라인. 명령 입력을 대기 중입니다...</p>
+              <p className="text-[10px]">"주인님, 음성이나 타이핑으로 명령해 주십시오."</p>
             </motion.div>
           )}
 
@@ -120,7 +120,7 @@ export default function JarvisConsole({
                     msg.role === "user" ? "text-right text-sky-400" : "text-left text-cyan-400"
                   }`}
                 >
-                  {msg.role === "user" ? `OPERATOR (${honorific.toUpperCase()})` : "J.A.R.V.I.S."} •{" "}
+                  {msg.role === "user" ? `오퍼레이터 (${honorific.toUpperCase()})` : "자비스 (J.A.R.V.I.S.)"} •{" "}
                   {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                 </span>
               </div>
@@ -142,7 +142,7 @@ export default function JarvisConsole({
                   <p className="italic">{transitText}...</p>
                 </div>
                 <span className="text-[9px] font-mono text-red-400 opacity-60 text-right px-1">
-                  TRANSCRIBING IN REALTIME
+                  실시간 음성 자막 분석 중
                 </span>
               </div>
             </motion.div>
@@ -159,7 +159,7 @@ export default function JarvisConsole({
                 <User className="w-4 h-4 text-red-400" />
               </div>
               <div className="px-3 py-2 rounded-xl text-xs font-mono bg-red-950/15 border border-red-500/20 text-red-400 animate-pulse">
-                Listening for voice input... Speak now
+                음성 인식 수신 중... 지금 말씀하십시오
               </div>
             </motion.div>
           )}
@@ -180,7 +180,7 @@ export default function JarvisConsole({
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:-0.15s]" />
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce" />
                 </div>
-                <span>Generating voice transmission...</span>
+                <span>자비스 음성 전송 신호 생성 중...</span>
               </div>
             </motion.div>
           )}

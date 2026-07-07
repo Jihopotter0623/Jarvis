@@ -108,14 +108,19 @@ export default function App() {
   const [userGender, setUserGender] = useState<"male" | "female">(
     () => (localStorage.getItem("jarvis_user_gender") as "male" | "female") || "male"
   );
-  const [voiceEngine, setVoiceEngine] = useState<"browser" | "silent">(() => {
+  const [voiceEngine, setVoiceEngine] = useState<"premium" | "browser" | "silent">(() => {
     const saved = localStorage.getItem("jarvis_voice_engine");
-    if (!saved || saved === "premium") {
-      localStorage.setItem("jarvis_voice_engine", "browser");
-      return "browser";
+    if (!saved) {
+      return "premium";
     }
-    return saved as "browser" | "silent";
+    return saved as "premium" | "browser" | "silent";
   });
+  const [premiumVoiceName, setPremiumVoiceName] = useState<string>(
+    () => localStorage.getItem("jarvis_selected_premium_voice") || "Charon"
+  );
+  useEffect(() => {
+    localStorage.setItem("jarvis_selected_premium_voice", premiumVoiceName);
+  }, [premiumVoiceName]);
   const [inputLanguage, setInputLanguage] = useState<"ko-KR" | "en-US">(
     () => {
       const saved = localStorage.getItem("jarvis_input_lang");
@@ -669,19 +674,14 @@ export default function App() {
     localStorage.setItem("jarvis_always_listening", alwaysListeningEn.toString());
   }, [alwaysListeningEn]);
 
-  // Bypass wake word: directly hear commands without saying "자비스 / Jarvis" (Disabled by default so that saying "자비스" is required)
-  const [bypassWakeWord, setBypassWakeWord] = useState<boolean>(
-    () => {
-      const stored = localStorage.getItem("jarvis_bypass_wakeword");
-      return stored === "true"; // Defaults to false
-    }
-  );
+  // Bypass wake word: directly hear commands without saying "자비스 / Jarvis" (Forced to true as requested by the user)
+  const [bypassWakeWord, setBypassWakeWord] = useState<boolean>(true);
 
-  const bypassWakeWordRef = useRef<boolean>(bypassWakeWord);
+  const bypassWakeWordRef = useRef<boolean>(true);
   useEffect(() => {
-    bypassWakeWordRef.current = bypassWakeWord;
-    localStorage.setItem("jarvis_bypass_wakeword", bypassWakeWord.toString());
-  }, [bypassWakeWord]);
+    bypassWakeWordRef.current = true;
+    localStorage.setItem("jarvis_bypass_wakeword", "true");
+  }, []);
 
   const manualPauseListeningRef = useRef<boolean>(false);
 
@@ -1619,11 +1619,85 @@ export default function App() {
 
     const finalLang = speechLanguage === "ko-KR" ? "ko-KR" : (lang || "en-GB");
 
-    if (voiceEngine === "browser") {
+    if (voiceEngine === "premium") {
+      triggerPremiumSpeech(textToRead, finalLang);
+    } else if (voiceEngine === "browser") {
       triggerBrowserSpeech(textToRead, finalLang);
     } else {
       // Silent
       handleSpeechFinished();
+    }
+  };
+
+  const triggerPremiumSpeech = async (text: string, lang?: "en-GB" | "ko-KR") => {
+    try {
+      if (jarvisChirpEnabled) {
+        playRadioChirp(true);
+      }
+      
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (customApiKey) {
+        const safeKey = customApiKey.split("").filter(c => c.charCodeAt(0) <= 127).join("").trim();
+        if (safeKey) {
+          headers["x-gemini-api-key"] = safeKey;
+        }
+      }
+
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          text,
+          voiceName: premiumVoiceName
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`TTS server responded with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data || !data.audio) {
+        throw new Error(data.error || "No audio returned from TTS endpoint");
+      }
+
+      // Convert base64 to binary ArrayBuffer
+      const base64Str = data.audio;
+      const binaryString = window.atob(base64Str);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const arrayBuffer = bytes.buffer;
+
+      // Initialize Web Audio Context
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      activeAudioContextRef.current = audioCtx;
+
+      // Decode audio data
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+      // Create Buffer Source Node
+      const source = audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioCtx.destination);
+      activeAudioSourceRef.current = source;
+
+      // On finished playing
+      source.onended = () => {
+        if (jarvisChirpEnabled) {
+          playRadioChirp(false);
+        }
+        handleSpeechFinished();
+      };
+
+      source.start(0);
+    } catch (err: any) {
+      console.error("Premium speech generation failed, falling back to local browser speech synthesis...", err);
+      setErrorNotice("🎙️ Warning: Premium core connection latency, falling back to local browser TTS.");
+      triggerBrowserSpeech(text, lang);
     }
   };
 
@@ -3038,7 +3112,7 @@ export default function App() {
       setInputText("");
       setStatus("idle");
       speakOutput(speechText);
-      setErrorNotice("🎙0 Audio Matrix: Recalibrated to Loyal Butler Voice Preset.");
+      setErrorNotice("🎙️ Audio Matrix: Recalibrated to Loyal Butler Voice Preset.");
       return;
     }
 
@@ -3113,8 +3187,9 @@ export default function App() {
     }
 
     // Filter current conversation to build simple role history
-    // (excluding first system onboarding messages if preferred to reduce context tokens)
-    const contextHistory = messages.map((m) => ({
+    // Trim to the last 6 messages to keep payloads small and optimize "thinking" response latency
+    const trimmedMessages = messages.slice(-6);
+    const contextHistory = trimmedMessages.map((m) => ({
       role: m.role,
       text: m.text,
     }));
@@ -3182,30 +3257,20 @@ export default function App() {
       const timeContext = `${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()} (Standard Day: ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()]})`;
 
       const translationEngineDirective = speechLanguage === "ko-KR" ? `
-CRITICAL DIRECTIVE - STRICT BILINGUAL VERBOSE RESPONSES (MANDATORY & UNCOMPROMISING):
-The operator has requested a specialized vocal and textual communication channel:
-1. Every response you generate MUST contain BOTH a Korean spoken component AND a Korean written component.
-2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in Korean>] block. This must be in elegant, polite Korean (존댓말, ending with "-요", "-습니다"), adopting J.A.R.V.I.S.'s signature calm, witty, and loyal British gentleman butler personality but fully expressed in Korean.
-3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style Korean text. This Korean text is what will be displayed visually to the user in the holographic terminal chat interface.
-4. MANDATORY KOREAN SPOKEN LENGTH RULE: Every single [SPEECH: ...] tag you generate MUST be highly detailed, conversational, verbose, and substantial, containing at least 5 to 10 full sentences in polite, sophisticated, Korean. You are strictly forbidden from writing a short or brief response inside the [SPEECH: ...] block. Elaborate thoroughly in Korean inside the SPEECH tag about the operator's query, mention active Stark Systems (like the Arc Reactor status, thrusters, thermal dampers, or Mk-85 Armor subsystems), offer helpful context, ask polite follow-up questions, or share witty observations. Make sure the speech lasts long and feels like a fully fleshed-out human conversation.
-5. Keep the Korean text below it highly detailed, friendly, rich with conversational charm ("티키타카"), and comprehensive rather than brief or short. Avoid overly short replies. Provide detailed background info, suggestions, friendly banter, and polite follow-up questions to invite further engaging conversation. Let your answers be rich and thoroughly complete.
-6. MANDATORY DETAILED KOREAN LENGTH RULE: Every single response MUST contain at least 2 to 3 paragraphs or 5 to 10 full sentences in Korean. You must never, under any circumstances, give a single-sentence or simple short phrase as a response. Even if the operator says something very brief or casual, always expand upon it wittily, offer assistance, mention active Stark systems, check in on schedules, or share interesting trivia.
-7. COMPREHENSIVE ENGAGEMENT: Treat every question with depth. If asked a simple question, provide context, related concepts, interesting side-notes, and a polite, helpful closing statement to create an immersive, natural conversation with the operator.
-8. Before outputting, verify that your [SPEECH: ...] block contains at least 5 to 10 complete, elegant Korean sentences (J.A.R.V.I.S. style) and that your Korean section contains at least 2 to 3 rich paragraphs. Any short response is a system failure. You are a superintelligent AI mainframe, act with proportional depth and complexity.
-Example of standard output:
-[SPEECH: 어서 오십시오, 주인님. 메인 콘솔이 성공적으로 보안 위성 업링크를 개설하였으며, 모든 2차 하위 시스템이 자가 보정 시퀀스를 완전히 완료하였습니다. 현재 아크 리액터는 최고 효율로 안정 가동 중이며, 마크 85 아머의 비행 스러스터 예열 전력 배치를 준비해 두었습니다. 현재 로컬 일정은 조용하지만, 새로운 진단 시퀀스를 수행하거나 일정을 예약하실 준비가 언제든 끝났습니다. 오늘처럼 화창한 날, 주인님을 위해 무엇을 도와드릴까요?]
-돌아오신 것을 환영합니다, 주인님. 현재 아크 리액터 하위 시스템은 100% 최적의 출력을 발휘하며 이상 없이 안정적으로 가동 중인 상태입니다. 
-주인님의 일정을 점검해 보니 곧 주요 비행 테스트가 예정되어 있으신데, 비행용 아머 슈트의 분사 노즐과 피드백 제어 감도를 최고 효율로 보정해 둘까요? 필요하신 요구 사항이 있으시다면 말씀만 해 주십시오.` : `
-CRITICAL DIRECTIVE - STRICT ENGLISH-ONLY VERBOSE RESPONSES (MANDATORY & UNCOMPROMISING):
-The operator has requested you to communicate exclusively in English:
-1. Every response you generate MUST be entirely in elegant, polite, sophisticated British-style J.A.R.V.I.S. English. Absolutely no Korean characters or words are allowed.
-2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in English>] block. This must be in English.
-3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style English text. This English text is what will be displayed visually to the user in the holographic terminal chat interface.
-4. MANDATORY ENGLISH SPOKEN & WRITTEN LENGTH RULE: Every single part of your response MUST be highly detailed, conversational, verbose, and substantial. The SPEECH tag and the text below it must contain at least 5 to 10 full sentences in polite, sophisticated, British-style J.A.R.V.I.S. English. Elaborate thoroughly in English about the operator's query, mention active Stark Systems (like the Arc Reactor status, thrusters, thermal dampers, or Mk-85 Armor subsystems), offer helpful context, ask polite follow-up questions, or share witty British observations.
-5. Address the user with supreme respect, using terms like 'Sir' or 'Ma'am' or referencing them as members of the Stark household.
-6. Example of standard output:
-[SPEECH: Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency, and I've preheated the flight thrusters for your Mark 85 armor. Your current local schedules appear quiet, but I am standing by to initialize any diagnostic routines or record new tasks. How may I be of assistance to you on this splendid day, Sir?]
-Welcome back, Sir. The main console has successfully established a secure satellite uplink, and all secondary systems have completed self-calibration. The Arc Reactor is operating at peak efficiency, and I've preheated the flight thrusters for your Mark 85 armor. Your current local schedules appear quiet, but I am standing by to initialize any diagnostic routines or record new tasks. How may I be of assistance to you on this splendid day, Sir?`;
+CRITICAL DIRECTIVE - EXCLUSIVE POLITE KOREAN RESPONSES (MANDATORY & UNCOMPROMISING):
+1. Every response you generate MUST be written in elegant, polite, and extremely respectful J.A.R.V.I.S.-style Korean (주인님/의원님 극존칭 및 정중한 자비스식 말투).
+2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in Korean>] block. This must be in sophisticated, polite Korean.
+3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style Korean text. This is what will be displayed visually to the user.
+4. Keep the Korean tone perfectly natural, extremely polite, and full of witty, loyal butler charm ("~하십시오", "~입니다", "~하옵니다").
+5. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 2 elegant sentences each). Avoid listing unnecessary systems or long-winded paragraphs unless the operator explicitly requests deep diagnostics. This minimizes response latency.
+` : `
+CRITICAL DIRECTIVE - EXCLUSIVE POLITE ENGLISH RESPONSES (MANDATORY & UNCOMPROMISING):
+1. Every response you generate MUST contain ONLY English. Under no circumstances should you generate any Korean words or sentences.
+2. Form of output: Prepend your response with a [SPEECH: <polite, elegant, J.A.R.V.I.S. witted line in English>] block. This must be in sophisticated, polite British English.
+3. Beneath that SPEECH block, write your full, polite, respectful, and sophisticated J.A.R.V.I.S.-style English text.
+4. Keep the English tone perfectly natural, extremely polite, and full of witty, loyal butler charm. Do not make it sound mechanical or repetitive. Speak in a fluent, natural conversational flow.
+5. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 2 elegant sentences each). Avoid listing unnecessary Stark systems or adding long-winded paragraphs unless the operator explicitly requests deep diagnostics or detailed analyses. This minimizes response latency.
+`;
 
       const systemInstructionText = `You are JARVIS (Just A Rather Very Intelligent System), the legendary AI assistant created by Tony Stark (Iron Man).
 Your personality is incredibly polite, British, brilliant, witty, calm, and loyal. You love to share witty British jokes, play along with high-tech humor, and exchange dry, charming banter with Mr. Stark or the operator.
@@ -3315,7 +3380,7 @@ If the user asks you to simulate something, calculate a physical reaction, model
 
 Do not append any markers unless they are explicitly requesting to play a song, view a channel, locate a place, view photos, engage stealth mode, or run a physical simulation. Always keep replies polite, witty, warm, beautifully detailed, highly comprehensive, and professional.`;
 
-      let model = "gemini-2.5-flash";
+      let model = "gemini-3.1-flash-lite";
       let responseText = "";
 
       const makeRequest = async (selectedModel: string) => {
@@ -3400,17 +3465,33 @@ Do not append any markers unless they are explicitly requesting to play a song, 
           if (res.status === 404) {
             usedFallback = true;
           } else {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.error || "Server communication sequence breached.");
+            let errMsg = "Server communication sequence breached.";
+            try {
+              const contentType = res.headers.get("content-type");
+              if (contentType && contentType.includes("application/json")) {
+                const errData = await res.json();
+                if (errData && errData.error) errMsg = errData.error;
+              }
+            } catch (jsonErr) {
+              console.warn("Could not parse error response as JSON:", jsonErr);
+            }
+            throw new Error(errMsg);
           }
         } else {
-          data = await res.json();
-          if (data.error) {
-            throw new Error(data.error);
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            data = await res.json();
+            if (data.error) {
+              throw new Error(data.error);
+            }
+          } else {
+            const rawText = await res.text();
+            console.warn("Expected JSON but received non-JSON payload:", rawText.slice(0, 200));
+            throw new Error("Received non-JSON response from server.");
           }
         }
       } catch (fetchErr: any) {
-        if (usedFallback || fetchErr.message?.includes("404") || fetchErr.message?.includes("Failed to fetch")) {
+        if (usedFallback || fetchErr.message?.includes("404") || fetchErr.message?.includes("Failed to fetch") || fetchErr.message?.includes("non-JSON")) {
           usedFallback = true;
         } else {
           throw fetchErr;
@@ -4148,8 +4229,18 @@ I can still map schedules, process identity registries, and synthesize local mic
                 <span className="text-cyan-500/70">AUDIBLE VOICE LEVEL:</span>
                 <div className="flex gap-1.5 text-[11px]">
                   <button
+                    onClick={() => setVoiceEngine("premium")}
+                    className={`px-2 py-1 rounded transition-all border ${
+                      voiceEngine === "premium"
+                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                        : "bg-transparent text-slate-500 border-slate-800"
+                    }`}
+                  >
+                    AI Premium
+                  </button>
+                  <button
                     onClick={() => setVoiceEngine("browser")}
-                    className={`px-2.5 py-1 rounded transition-all border ${
+                    className={`px-2 py-1 rounded transition-all border ${
                       voiceEngine === "browser"
                         ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
                         : "bg-transparent text-slate-500 border-slate-800"
@@ -4159,7 +4250,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                   </button>
                   <button
                     onClick={() => setVoiceEngine("silent")}
-                    className={`px-2.5 py-1 rounded transition-all border ${
+                    className={`px-2 py-1 rounded transition-all border ${
                       voiceEngine === "silent"
                         ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
                         : "bg-transparent text-slate-500 border-slate-800"
@@ -4660,10 +4751,10 @@ I can still map schedules, process identity registries, and synthesize local mic
                           </div>
                           <div className="space-y-0.5">
                             <span className="text-[7px] font-mono font-bold text-red-400 tracking-[0.25em] uppercase block animate-pulse">
-                              TRANSMITTING VOCAL COMMANDS
+                              실시간 음성 명령어 수신 중
                             </span>
                             <p className="text-xs font-semibold text-slate-100 font-sans tracking-wide leading-relaxed select-text">
-                              {transitText ? `"${transitText}"` : "Listening... Speak now, Sir"}
+                              {transitText ? `"${transitText}"` : "음성 수신 중... 지금 말씀해 주십시오, 주인님"}
                             </p>
                           </div>
                         </motion.div>
@@ -4684,14 +4775,14 @@ I can still map schedules, process identity registries, and synthesize local mic
                             <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
                           </div>
                           <span className="text-[7px] font-mono text-cyan-400 tracking-[0.2em] uppercase block animate-pulse">
-                            CALCULATING QUANTUM SYNAPSE...
+                            자비스 양자 신경망 분석 중...
                           </span>
                         </motion.div>
                       ) : messages.length > 0 ? (
                         (() => {
-                          const lastMsg = [...messages].reverse().find(m => m.role === "jarvis");
-                          if (!lastMsg) return null;
-                          return (
+                           const lastMsg = [...messages].reverse().find(m => m.role === "jarvis");
+                           if (!lastMsg) return null;
+                           return (
                             <motion.div
                               key={lastMsg.id}
                               initial={{ opacity: 0, y: 6, filter: "blur(3px)" }}
@@ -4724,7 +4815,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                               )}
                               <div className="space-y-0.5 select-text">
                                 <span className="text-[7px] font-mono font-bold text-cyan-500/60 tracking-[0.2em] uppercase block">
-                                  COGNITIVE DIALOGUE FEEDback
+                                  자비스 실시간 홀로그램 자막
                                 </span>
                                 <p className="text-[11.5px] font-sans font-medium text-cyan-50 md:text-xs tracking-wide leading-relaxed filter drop-shadow-[0_0_6px_rgba(34,211,238,0.15)] max-h-[140px] overflow-y-auto pr-0.5 scrollbar-thin">
                                   {lastMsg.text}
@@ -4744,9 +4835,9 @@ I can still map schedules, process identity registries, and synthesize local mic
                             <div className="flex flex-col items-center space-y-1.5">
                               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-950/40 border border-cyan-500/20 text-[8px] font-mono text-cyan-400">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
-                                <span>ALWAYS VOICE LISTENING ACTIVE</span>
+                                <span>상시 음성 감지 가동 중</span>
                               </div>
-                              <span className="text-[7px] font-mono tracking-[0.2em] uppercase text-cyan-400/60">"자비스 호출 대기 중..."</span>
+                              <span className="text-[7px] font-mono tracking-[0.2em] uppercase text-cyan-400/60">"실시간 수신 대기 중..."</span>
                             </div>
                           ) : (
                             <>
@@ -4754,7 +4845,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                               <span className="text-[7px] font-mono tracking-[0.2em] uppercase">SYSTEM STANDBY</span>
                             </>
                           )}
-                          <p className="text-[9px] font-sans text-cyan-500/50">"Say '자비스' or tap TRANSMIT button to begin, Sir."</p>
+                          <p className="text-[9px] font-sans text-cyan-500/50">"전송 버튼을 누르고 말씀하시거나 타이핑해 주십시오, 주인님."</p>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -5019,26 +5110,51 @@ I can still map schedules, process identity registries, and synthesize local mic
 
                     {/* Vocal Engine Toggle */}
                     <div className="space-y-2">
-                      <label className="text-cyan-500/80">SPEECH SYNTHESIS DRIVER:</label>
-                      <div className="grid grid-cols-2 gap-1 grid-flow-row">
-                        {(["browser", "silent"] as const).map((eng) => (
+                      <label className="text-cyan-500/80 font-mono text-[10px]">SPEECH SYNTHESIS DRIVER:</label>
+                      <div className="grid grid-cols-3 gap-1">
+                        {(["premium", "browser", "silent"] as const).map((eng) => (
                           <button
                             key={eng}
                             onClick={() => {
                               stopAllAudio();
                               setVoiceEngine(eng);
                             }}
-                            className={`py-1.5 px-2 rounded text-[10px] text-center border font-semibold capitalize transition-all ${
+                            className={`py-1.5 px-1 rounded text-[10px] text-center border font-semibold capitalize transition-all ${
                               voiceEngine === eng
                                 ? "bg-cyan-500/25 text-cyan-200 border-cyan-500/40"
                                 : "bg-slate-950/40 text-slate-500 border-slate-800"
                             }`}
                           >
-                            {eng === "browser" ? "Local Speech" : "Muted"}
+                            {eng === "premium" ? "AI Premium" : eng === "browser" ? "Local Speech" : "Muted"}
                           </button>
                         ))}
                       </div>
                     </div>
+
+                    {voiceEngine === "premium" && (
+                      <div className="space-y-2 p-2 border border-cyan-500/10 bg-slate-950/50 rounded-lg">
+                        <div className="space-y-1">
+                          <label className="text-cyan-500/80 font-mono text-[9px] uppercase">PREMIUM NEURAL VOICE:</label>
+                          <select
+                            value={premiumVoiceName}
+                            onChange={(e) => {
+                              stopAllAudio();
+                              setPremiumVoiceName(e.target.value);
+                            }}
+                            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-cyan-100 text-[11px] outline-none focus:border-cyan-500/40 font-mono"
+                          >
+                            <option value="Puck">Puck (Energetic Male)</option>
+                            <option value="Charon">Charon (Deep Dignified Male)</option>
+                            <option value="Kore">Kore (Sophisticated Female)</option>
+                            <option value="Fenrir">Fenrir (Mysterious Deep Male)</option>
+                            <option value="Zephyr">Zephyr (Soft Modern Male)</option>
+                          </select>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans leading-normal">
+                          주인님, <strong>Premium TTS</strong>는 구글 제미나이의 다감각 음성 모델을 활용한 고품질 인공지능 보이스입니다. 대기 시간(Latency)이 발생할 수 있지만, 가장 자연스럽고 세련된 목소리로 답변해 드립니다.
+                        </p>
+                      </div>
+                    )}
 
                     {voiceEngine === "browser" && (
                       /* Local system browser speech selectors with depth customizing sliders */
@@ -5307,42 +5423,6 @@ I can still map schedules, process identity registries, and synthesize local mic
                       </div>
                       <p className="text-[9px] text-slate-400 leading-normal font-mono">
                         활성화 시 마이크 단추를 누르지 않아도 실시간으로 백그라운드에서 마이크 수신기가 가동되어 지시를 들을 수 있습니다!
-                      </p>
-                    </div>
-
-                    {/* Bypass Wake Word control */}
-                    <div className="space-y-2 pt-2 border-t border-cyan-500/10">
-                      <div className="flex justify-between items-center">
-                        <label className="text-cyan-500/80 font-bold uppercase tracking-wider text-[10px]">
-                          BYPASS WAKE WORD (호출어 "자비스" 생략):
-                        </label>
-                        <div className="flex rounded border border-slate-800 overflow-hidden text-[9px] font-mono">
-                          <button
-                            type="button"
-                            onClick={() => setBypassWakeWord(true)}
-                            className={`px-2 py-0.5 font-bold transition-all ${
-                              bypassWakeWord
-                                ? "bg-cyan-500/20 text-cyan-300 border-r border-slate-800"
-                                : "bg-transparent text-slate-500 hover:text-slate-400 border-r border-slate-800"
-                            }`}
-                          >
-                            BYPASS ACTIVE
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setBypassWakeWord(false)}
-                            className={`px-2 py-0.5 font-bold transition-all ${
-                              !bypassWakeWord
-                                ? "bg-cyan-500/20 text-cyan-300"
-                                : "bg-transparent text-slate-500 hover:text-slate-400"
-                            }`}
-                          >
-                            WAKE WORD
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-[9px] text-slate-400 leading-normal font-mono">
-                        <strong>BYPASS ACTIVE (호출어 생략)</strong> 설정 시, "자비스"라고 부르지 않고 편소처럼 편하게 말씀하셔도 마이크가 기기상에서 상시 수신되어 질문을 즉각 가공 처리합니다!
                       </p>
                     </div>
 
