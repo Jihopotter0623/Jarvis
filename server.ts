@@ -334,7 +334,7 @@ When the operator uploads or presents a picture:
 4. If translation mode is ON, translate the final analyzed insights to English, else adapt your language polite- gentleman style of response.
 
 ACCURACY & DEPTH OPTIMIZATION DIRECTIVE:
-Provide highly accurate, polite, and beautifully concise responses. Keep your answers brief (ideally 1 to 2 sentences) and highly punchy unless the operator explicitly requests deep technical diagrams or detailed code/blueprint analysis. This ensures lightning-fast voice response speed and ultra-low latency.
+Provide highly accurate, polite, and EXTREMELY BRIEF responses. Keep your answers under 1 short sentence (maximum 10-15 words) and highly punchy unless the operator explicitly requests deep technical diagrams or detailed code/blueprint analysis. Every extra word increases audio synthesis latency. Be incredibly snappy, fast, and witted.
 
 STARK MATHEMATICAL & PHYSICS SUBROUTINES DIRECTIVE:
 You possess complete master-level mathematical capability. When presented with mathematical formulas, algebraic equations, trigonometry, or calculus queries, you MUST:
@@ -354,7 +354,7 @@ When the operator provides any Python code or Pybricks code to analyze or simula
 
       // Korean Output Directive is replaced by the bilingual directive above.
 
-Keep your output natural for a voice assistant—conversational, extremely concise, brief (usually under 2 sentences), and avoid excessive markdown formatting. Do not output long lists or paragraphs unless explicitly asked, to keep the latency ultra-low.
+Keep your output natural for a voice assistant—conversational, extremely brief (maximum 1 short sentence), and avoid excessive markdown formatting. Under no circumstances output lists, bullet points, or paragraphs unless explicitly asked, to guarantee ultra-low latency.
 Always address the user with supreme respect, using terms like '${honorific}' or referencing them as members of the Stark household (current operator name: ${nameInSpeech}). You are running at 100% capacity.
 
 Active Schedule Synchronization Array:
@@ -500,7 +500,7 @@ Do not append any markers unless they are explicitly requesting to play a song, 
 
       try {
         response = await aiClient.models.generateContent({
-          model: "gemini-3.1-flash-lite",
+          model: "gemini-2.5-flash",
           contents: contents,
           config: {
             systemInstruction: systemInstruction,
@@ -511,10 +511,10 @@ Do not append any markers unless they are explicitly requesting to play a song, 
         if (isAuthError(firstErr)) {
           throw firstErr;
         }
-        console.warn("Primary model gemini-3.1-flash-lite failed/overloaded, falling back to gemini-3.5-flash...", firstErr.message || firstErr);
+        console.warn("Primary model gemini-2.5-flash failed/overloaded, falling back to gemini-1.5-flash...", firstErr.message || firstErr);
         try {
           response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
+            model: "gemini-1.5-flash",
             contents: contents,
             config: {
               systemInstruction: systemInstruction,
@@ -525,9 +525,9 @@ Do not append any markers unless they are explicitly requesting to play a song, 
           if (isAuthError(secondErr)) {
             throw secondErr;
           }
-          console.warn("Secondary model gemini-3.5-flash overloaded, falling back to gemini-flash-latest...", secondErr.message || secondErr);
+          console.warn("Secondary model gemini-1.5-flash overloaded, falling back to gemini-2.0-flash...", secondErr.message || secondErr);
           response = await aiClient.models.generateContent({
-            model: "gemini-flash-latest",
+            model: "gemini-2.0-flash",
             contents: contents,
             config: {
               systemInstruction: systemInstruction,

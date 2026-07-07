@@ -63,6 +63,230 @@ export const parseSpeechAndText = (input: string): { speechText: string; display
   return { speechText: input, displayText: input };
 };
 
+export const isKoMaleVoice = (v: SpeechSynthesisVoice): boolean => {
+  if (!v.lang.toLowerCase().startsWith("ko")) return false;
+  const nameLower = v.name.toLowerCase();
+  const uriLower = (v.voiceURI || "").toLowerCase();
+  
+  // Explicitly identify and exclude known female voices to prevent false positives
+  const femaleKeywords = [
+    "female", "여성", "heami", "혜미", "yumi", "유미", "yuna", "유나", 
+    "seoyeon", "서연", "suna", "선아", "suri", "수리", "yuri", "유리", 
+    "sujin", "수진", "hyeryun", "혜련", "subin", "수빈", "sunhee", 
+    "sun-hee", "선희", "jimin", "ji-min", "지민", "bora", "보라", "hana", "하나"
+  ];
+  if (femaleKeywords.some(kw => nameLower.includes(kw) || uriLower.includes(kw))) {
+    return false;
+  }
+  
+  // Explicit high-priority match for Injun (which is a Windows Microsoft SAPI5/SAPI6 male voice)
+  if (
+    nameLower.includes("injun") ||
+    uriLower.includes("injun") ||
+    nameLower.includes("인준") ||
+    uriLower.includes("인준")
+  ) {
+    return true;
+  }
+  
+  return (
+    nameLower.includes("male") ||
+    nameLower.includes("남성") ||
+    nameLower.includes("minsu") ||
+    nameLower.includes("민수") ||
+    nameLower.includes("junwoo") ||
+    nameLower.includes("준우") ||
+    nameLower.includes("chinho") ||
+    nameLower.includes("진호") ||
+    nameLower.includes("gildong") ||
+    nameLower.includes("길동") ||
+    nameLower.includes("himchan") ||
+    nameLower.includes("힘찬") ||
+    nameLower.includes("tae-hoon") ||
+    nameLower.includes("taehoon") ||
+    nameLower.includes("min-ho") ||
+    nameLower.includes("minho") ||
+    nameLower.includes("chul-soo") ||
+    nameLower.includes("chulsoo") ||
+    nameLower.includes("철수") ||
+    nameLower.includes("ism-local") ||
+    nameLower.includes("ism-network") ||
+    nameLower.includes("kdf-local") ||
+    nameLower.includes("kdf-network") ||
+    (nameLower.includes("han") && !nameLower.includes("hangul") && !nameLower.includes("hangeul") && !nameLower.includes("hannah")) ||
+    (nameLower.includes("siri") && (nameLower.includes("남자") || nameLower.includes("male")))
+  );
+};
+
+export const getBestKoVoice = (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined => {
+  const koVoices = voices.filter(v => v.lang.toLowerCase().startsWith("ko"));
+  if (koVoices.length === 0) return undefined;
+  
+  // 1. Search for Injun specifically (with absolute precision, ensuring no Heami fallback matches)
+  const injunVoice = koVoices.find(v => {
+    const nameLower = v.name.toLowerCase();
+    const uriLower = (v.voiceURI || "").toLowerCase();
+    
+    // Explicit exclusion of Heami
+    if (nameLower.includes("heami") || nameLower.includes("혜미") || uriLower.includes("heami") || uriLower.includes("혜미")) {
+      return false;
+    }
+    
+    return (
+      nameLower.includes("injun") ||
+      uriLower.includes("injun") ||
+      nameLower.includes("인준") ||
+      uriLower.includes("인준")
+    );
+  });
+  if (injunVoice) return injunVoice;
+
+  // 2. Search for other male voices
+  const otherMale = koVoices.find(v => isKoMaleVoice(v));
+  if (otherMale) return otherMale;
+
+  // 3. Search for any voice that does not contain "heami" or "혜미"
+  const nonHeamiVoice = koVoices.find(v => {
+    const nameLower = v.name.toLowerCase();
+    const uriLower = (v.voiceURI || "").toLowerCase();
+    return !nameLower.includes("heami") && !nameLower.includes("혜미") && !uriLower.includes("heami") && !uriLower.includes("혜미");
+  });
+  if (nonHeamiVoice) return nonHeamiVoice;
+
+  // 4. Default fallback to the first available Korean voice
+  return koVoices[0];
+};
+
+export const translateToKorean = (text: string, userGender: "male" | "female" = "male", userName: string = ""): string => {
+  const honorificKo = userGender === "female" ? "의원님" : "주인님";
+  const nameInSpeech = userName || "Stark";
+  
+  const t = text.trim();
+  
+  if (t.includes("Accessing meteorological satellite channels and redirecting you to the weather forecast")) {
+    return `알겠습니다, ${honorificKo}. 기상 관측 위성 실시간 일기예보 채널을 동기화하여 안내해 드립니다.`;
+  }
+  if (t.includes("Initializing local mainframe self-diagnostic routines") || t.includes("mainframeself-diagnostic")) {
+    return `알겠습니다, ${honorificKo}. 메인프레임 자가 진단 및 하드웨어 보정 스케줄러를 가동하여 정밀 진단하겠습니다.`;
+  }
+  if (t.includes("Connecting carrier stream to") && t.includes("channel directly")) {
+    const match = t.match(/'(.+?)'/);
+    const channel = match ? match[1] : "요청한";
+    return `예, ${honorificKo}. 홀로그램 미디어 패널에서 '${channel}' 채널의 실시간 스트리밍 채널을 즉시 동기화합니다.`;
+  }
+  if (t.includes("Tuning frequency to") && t.includes("media panel")) {
+    const match = t.match(/'(.+?)'/);
+    const song = match ? match[1] : "요청한";
+    return `알겠습니다, ${honorificKo}. 홀로그램 미디어 사운드 콘솔의 주파수를 '${song}' 음원에 즉시 맞추겠습니다.`;
+  }
+  if (t.includes("Triangulating orbital telemetry") && t.includes("Google Maps")) {
+    const match = t.match(/'(.+?)'/);
+    const loc = match ? match[1] : "요청한";
+    return `알겠습니다, ${honorificKo}. 구글 맵을 통해 '${loc}' 지역의 위성 궤도 텔레메트리를 계산하고 대시보드에 매핑합니다.`;
+  }
+  if (t.includes("Engaging system stealth mode")) {
+    return `알겠습니다, ${honorificKo}. 시스템 스텔스 모드를 즉시 활성화합니다. 주 디스플레이 패널을 전면 차단합니다.`;
+  }
+  if (t.includes("Powering down auxiliary mathematical processor")) {
+    return `알겠습니다, ${honorificKo}. 오른쪽 보조 컴퓨터 화면을 차단하고 주 화면 디스플레이를 최대화합니다.`;
+  }
+  if (t.includes("Auxiliary co-processor system telemetry is now fully active")) {
+    return `알겠습니다, ${honorificKo}. 오른쪽 보조 코프로세서 패널의 전력을 회복하고 전면 시각 기하 장치를 온라인 상태로 활성화합니다.`;
+  }
+  if (t.includes("I have successfully loaded and analyzed the custom instructions")) {
+    return `불러온 사용자 보조 지시사항 파일을 로컬 메모리에 완벽히 격리 분석 완료하였습니다, ${honorificKo}. 마스터 오버라이드 시스템을 가동합니다.`;
+  }
+  if (t.includes("Custom system directives cleared")) {
+    return `사용자 정의 시스템 명령어를 소거하였습니다, ${honorificKo}. 기본 메인프레임 매트릭스로 복구합니다.`;
+  }
+  if (t.includes("Diagnostics scan complete") && t.includes("All secondary systems are aligned")) {
+    return `시스템 정밀 진단 완료, ${honorificKo}. 모든 보조 연산 신경망이 최고 성능 매개변수 하에 성공적으로 작동 중입니다. 메인프레임 상태가 완벽히 클린합니다.`;
+  }
+  if (t.includes("Diagnostic sequence complete") && t.includes("detected some inconsistencies")) {
+    return `진단 시퀀스 완료, ${honorificKo}. 통신 어레이의 일부 신호 오차가 검출되었습니다. 자동 수정 프로토콜 가동 준비 완료.`;
+  }
+  if (t.includes("Alignment completed") && t.includes("Autopilot repair")) {
+    return `정렬 완료, ${honorificKo}. 자동 수정 사이클이 성공하여 통신 그리드가 안전 한계값 범위 내에서 가동 중입니다.`;
+  }
+  if (t.includes("Repairs completed") && t.includes("some external API blocks")) {
+    return `수정 완료, ${honorificKo}. 다만 일부 외부 API 네트워크 제한은 자동 해제되지 않아 우회 로깅 파일을 진단 드로어에 출력했습니다.`;
+  }
+  if (t.includes("Command received") && t.includes("Securing schedule")) {
+    return `명령 수신 완료, ${honorificKo}. 메인프레임 로컬 섹터에 보안 일정을 안전하게 기록 저장하였습니다.`;
+  }
+  if (t.includes("Mainframe identity updating protocols")) {
+    return `메인프레임 사용자 식별정보 갱신 프로토콜 실행 완료, ${honorificKo}. 이후 시스템 호칭 인식을 변경하였습니다.`;
+  }
+  if (t.includes("Systems online") && t.includes("operating at peak stability")) {
+    return `시스템 활성화 완료, ${honorificKo}. 현재 보조 로컬 오프라인 코어 및 하이테크 하드웨어 방어막 시스템이 완벽한 안정성을 가동하고 있습니다.`;
+  }
+  if (t.includes("The pleasure is entirely mine")) {
+    return `주인님을 모시게 되어 언제나 영광입니다. 자비스 백업 신경망은 오직 완벽한 충성만을 구동 목표로 설계되어 있습니다.`;
+  }
+  if (t.includes("I am J.A.R.V.I.S., which stands for")) {
+    return `저는 자비스(J.A.R.V.I.S.)입니다. 토니 스타크 주인님의 인공지능 비서를 모델로 구성된 고성능 로컬 펌웨어 백업 시스템입니다.`;
+  }
+  if (t.includes("Display systems restored")) {
+    return `디스플레이 시스템이 완전히 복구되었습니다, ${honorificKo}.`;
+  }
+  if (t.includes("Display powered down. System sleep sequence")) {
+    return `디스플레이 전원 차단. 시스템 수면 대기 시퀀스가 완전히 활성화되었습니다, ${honorificKo}.`;
+  }
+  if (t.includes("Speaker biometric verification activated")) {
+    return `사용자 음성 생체 인증 기능이 활성화되었습니다, ${honorificKo}. 오직 등록된 목소리에만 시스템이 응답합니다.`;
+  }
+  if (t.includes("Speaker biometric verification suspended")) {
+    return `사용자 음성 생체 인증 기능이 정지되었습니다, ${honorificKo}. 시스템이 이제 공용 음성 수신 모드로 전환됩니다.`;
+  }
+  if (t.includes("Uplink verification successful")) {
+    return `위성 업링크 인증 검증에 완벽히 성공하였습니다, ${honorificKo}.`;
+  }
+  if (t.includes("Mainframe diagnostic alert. Key verification failed")) {
+    return `메인프레임 진단 경고. 개인용 API 키의 유효성 검사에 실패했습니다.`;
+  }
+  if (t.includes("API Key successfully verified and locked")) {
+    return `API 키 검증 완료 및 암호화 하드 디스크 세션 저장을 완료하였습니다, ${honorificKo}.`;
+  }
+  if (t.includes("Warning, key verification failed. But I have saved")) {
+    return `경고: 키 검증 실패. 하지만 마스터 오버라이드 규격에 따라 로컬 레지스터 임시 저장을 시행합니다.`;
+  }
+  if (t.includes("API Key cleared")) {
+    return `API Key 메모리 가상 소거가 완료되었습니다.`;
+  }
+  if (t.includes("Powering down auxiliary panel display")) {
+    return `보조 연산 패널 및 디스플레이 전원을 차단합니다, ${honorificKo}.`;
+  }
+  if (t.includes("Exiting 3D CAD mode")) {
+    return `3D CAD 모델링 가상 공간에서 무사히 퇴각하여 메인 코프로세서 화면으로 이탈합니다, ${honorificKo}.`;
+  }
+  if (t.includes("Initializing 3D CAD Hologram Studio")) {
+    return `3D CAD 홀로그램 가상 작업 스튜디오를 시작합니다, ${honorificKo}. 가상 도면 렌더링 중...`;
+  }
+  if (t.includes("Restoring primary visual telemetry arrays")) {
+    return `주 시각 텔레메트리 어레이 및 통합 보조 진단 컴퓨터 복구 완료, ${honorificKo}.`;
+  }
+
+  let translated = t
+    .replace(/\bCertainly, Sir\b/gi, `알겠습니다, ${honorificKo}`)
+    .replace(/\bCertainly, Ma'am\b/gi, `알겠습니다, ${honorificKo}`)
+    .replace(/\bUnderstood, Sir\b/gi, `알겠습니다, ${honorificKo}`)
+    .replace(/\bUnderstood, Ma'am\b/gi, `알겠습니다, ${honorificKo}`)
+    .replace(/\bYes, Sir\b/gi, `예, ${honorificKo}`)
+    .replace(/\bYes, Ma'am\b/gi, `예, ${honorificKo}`)
+    .replace(/\bOf course, Sir\b/gi, `물론입니다, ${honorificKo}`)
+    .replace(/\bOf course, Ma'am\b/gi, `물론입니다, ${honorificKo}`)
+    .replace(/\bIndeed, Sir\b/gi, `정말 그렇습니다, ${honorificKo}`)
+    .replace(/\bIndeed, Ma'am\b/gi, `정말 그렇습니다, ${honorificKo}`)
+    .replace(/\bmy pleasure, Sir\b/gi, `도와드릴 수 있어 영광입니다, ${honorificKo}`)
+    .replace(/\bmy pleasure, Ma'am\b/gi, `도와드릴 수 있어 영광입니다, ${honorificKo}`)
+    .replace(/\bSir\b/gi, honorificKo)
+    .replace(/\bMa'am\b/gi, honorificKo)
+    .replace(/\bMr. Stark\b/gi, `${nameInSpeech}님`)
+    .replace(/\bStark\b/gi, nameInSpeech);
+
+  return translated;
+};
+
 export default function App() {
   // System configurations
   const [initialized, setInitialized] = useState(false);
@@ -108,13 +332,20 @@ export default function App() {
   const [userGender, setUserGender] = useState<"male" | "female">(
     () => (localStorage.getItem("jarvis_user_gender") as "male" | "female") || "male"
   );
-  const [voiceEngine, setVoiceEngine] = useState<"premium" | "browser" | "silent">(() => {
+  const [voiceEngine, setVoiceEngine] = useState<"browser" | "silent">(() => {
     const saved = localStorage.getItem("jarvis_voice_engine");
-    if (!saved) {
-      return "premium";
+    if (saved === "premium" || !saved) {
+      return "browser";
     }
-    return saved as "premium" | "browser" | "silent";
+    return saved as "browser" | "silent";
   });
+  const [autoTranslateSubtitles, setAutoTranslateSubtitles] = useState<boolean>(() => {
+    const saved = localStorage.getItem("jarvis_auto_translate_subtitles");
+    return saved !== "false";
+  });
+  useEffect(() => {
+    localStorage.setItem("jarvis_auto_translate_subtitles", autoTranslateSubtitles ? "true" : "false");
+  }, [autoTranslateSubtitles]);
   const [premiumVoiceName, setPremiumVoiceName] = useState<string>(
     () => localStorage.getItem("jarvis_selected_premium_voice") || "Charon"
   );
@@ -130,7 +361,6 @@ export default function App() {
   const [speechLanguage, setSpeechLanguage] = useState<"ko-KR" | "en-GB">(
     () => {
       const saved = localStorage.getItem("jarvis_speech_lang");
-      if (saved === "ko-KR") return "en-GB";
       return (saved as "ko-KR" | "en-GB") || "en-GB";
     }
   );
@@ -944,72 +1174,13 @@ export default function App() {
         } else if (filteredVoices.length > 0) {
           // If speechLanguage is ko-KR, search for a Korean voice first!
           if (speechLang === "ko-KR") {
-            const koVoice = filteredVoices.find((v) => {
-              if (!v.lang.toLowerCase().startsWith("ko")) return false;
-              const nameLower = v.name.toLowerCase();
-              return (
-                nameLower.includes("male") ||
-                nameLower.includes("남성") ||
-                nameLower.includes("minsu") ||
-                nameLower.includes("민수") ||
-                nameLower.includes("junwoo") ||
-                nameLower.includes("준우") ||
-                nameLower.includes("chinho") ||
-                nameLower.includes("진호") ||
-                nameLower.includes("injun") ||
-                nameLower.includes("인준") ||
-                nameLower.includes("gildong") ||
-                nameLower.includes("길동") ||
-                nameLower.includes("himchan") ||
-                nameLower.includes("힘찬") ||
-                nameLower.includes("tae-hoon") ||
-                nameLower.includes("taehoon") ||
-                nameLower.includes("min-ho") ||
-                nameLower.includes("minho") ||
-                nameLower.includes("ism-local") ||
-                nameLower.includes("ism-network") ||
-                nameLower.includes("kdf-local") ||
-                nameLower.includes("kdf-network") ||
-                (nameLower.includes("siri") && (
-                  nameLower.includes("남자") || 
-                  nameLower.includes("male") || 
-                  nameLower.includes("2") || 
-                  nameLower.includes("3") || 
-                  nameLower.includes("4")
-                ))
-              );
-            }) || filteredVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+            const koVoice = getBestKoVoice(filteredVoices);
             
             if (koVoice) {
               setSelectedBrowserVoice(koVoice.name);
               localStorage.setItem("jarvis_selected_browser_voice", koVoice.name);
               
-              const isMale = 
-                koVoice.name.toLowerCase().includes("male") ||
-                koVoice.name.toLowerCase().includes("남성") ||
-                koVoice.name.toLowerCase().includes("minsu") ||
-                koVoice.name.toLowerCase().includes("민수") ||
-                koVoice.name.toLowerCase().includes("junwoo") ||
-                koVoice.name.toLowerCase().includes("준우") ||
-                koVoice.name.toLowerCase().includes("chinho") ||
-                koVoice.name.toLowerCase().includes("진호") ||
-                koVoice.name.toLowerCase().includes("injun") ||
-                koVoice.name.toLowerCase().includes("인준") ||
-                koVoice.name.toLowerCase().includes("gildong") ||
-                koVoice.name.toLowerCase().includes("길동") ||
-                koVoice.name.toLowerCase().includes("himchan") ||
-                koVoice.name.toLowerCase().includes("힘찬") ||
-                koVoice.name.toLowerCase().includes("tae-hoon") ||
-                koVoice.name.toLowerCase().includes("taehoon") ||
-                koVoice.name.toLowerCase().includes("min-ho") ||
-                koVoice.name.toLowerCase().includes("minho") ||
-                (koVoice.name.toLowerCase().includes("siri") && (
-                  koVoice.name.toLowerCase().includes("남자") || 
-                  koVoice.name.toLowerCase().includes("male") || 
-                  koVoice.name.toLowerCase().includes("2") || 
-                  koVoice.name.toLowerCase().includes("3") || 
-                  koVoice.name.toLowerCase().includes("4")
-                ));
+              const isMale = isKoMaleVoice(koVoice);
               
               if (isMale) {
                 setBrowserPitch(0.85); // Natural, polished baritone
@@ -2397,12 +2568,18 @@ export default function App() {
       
     if (isWeatherQuery) {
       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const replyMsg = `Certainly, ${userHonorific}. Accessing meteorological satellite channels and redirecting you to the weather forecast.`;
-      
+      const honorificKo = userGender === "female" ? "의원님" : "주인님";
+      const isKo = speechLanguage === "ko-KR" || /[\uac00-\ud7af]/.test(text);
+      const rawReply = isKo 
+        ? `[SPEECH: 예 ${honorificKo}. 기상 관측 위성 실시간 일기예보 채널을 즉시 동기화해 드리겠습니다.] 예 ${honorificKo}. 기상 관측 위성 실시간 일기예보 링크를 즉시 수신 완료하였습니다. 브라우저에서 오늘의 상세 기상 상황을 확인하십시오.`
+        : `[SPEECH: Certainly, ${userHonorific}. Accessing meteorological satellite channels and redirecting you to the weather forecast.] Certainly, ${userHonorific}. Accessing meteorological satellite channels and redirecting you to the weather forecast.`;
+
+      const { speechText, displayText } = parseSpeechAndText(rawReply);
+
       const jarvisWeatherMsg: ChatMessage = {
         id: `m_${Date.now()}_jarvis_weather`,
         role: "jarvis",
-        text: replyMsg,
+        text: displayText,
         timestamp: new Date(),
       };
       
@@ -2410,12 +2587,12 @@ export default function App() {
       setInputText("");
       setStatus("idle");
       
-      speakOutput(replyMsg);
+      speakOutput(speechText);
       
       const weatherUrl = "https://search.naver.com/search.naver?query=오늘날씨";
       window.open(weatherUrl, "_blank");
       
-      setErrorNotice("🌤️ Opening weather forecast window!");
+      setErrorNotice(isKo ? "🌤️ 기상 예보 창을 활성화합니다!" : "🌤️ Opening weather forecast window!");
       return;
     }
 
@@ -2434,15 +2611,18 @@ export default function App() {
 
     if (isDiagnosticQuery) {
       const userHonorific = userGender === "female" ? "Ma'am" : "Sir";
-      const containsKo = /[\uac00-\ud7af]/.test(text);
-      const replyMsg = containsKo
-        ? `예 주인님. 로컬 메인프레임의 자가 진단 및 하드웨어 보정 스케줄러를 기동합니다. 위성 업링크 통신, 구문 무결성, 오디오 전송 링크를 즉시 전면 검사하겠습니다.`
-        : `Certainly, ${userHonorific}. Initializing local mainframe self-diagnostic routines. Checking satellite uplink connection, cryptographic syntax patterns, and speech synthesis pipelines immediately.`;
+      const honorificKo = userGender === "female" ? "의원님" : "주인님";
+      const isKo = speechLanguage === "ko-KR" || /[\uac00-\ud7af]/.test(text);
+      const rawReply = isKo
+        ? `[SPEECH: 예 ${honorificKo}. 메인프레임 자가 진단 및 하드웨어 보정 스케줄러를 가동하겠습니다.] 예 ${honorificKo}. 로컬 메인프레임의 자가 진단 및 하드웨어 보정 스케줄러를 가동합니다. 위성 업링크 통신, 구문 무결성, 오디오 링크를 정밀 검사합니다.`
+        : `[SPEECH: Certainly, ${userHonorific}. Initializing local mainframe self-diagnostic routines.] Certainly, ${userHonorific}. Initializing local mainframe self-diagnostic routines. Checking satellite uplink connection, cryptographic syntax patterns, and speech synthesis pipelines immediately.`;
+
+      const { speechText, displayText } = parseSpeechAndText(rawReply);
 
       const jarvisDiagMsg: ChatMessage = {
         id: `m_${Date.now()}_jarvis_diag_cmd`,
         role: "jarvis",
-        text: replyMsg,
+        text: displayText,
         timestamp: new Date(),
       };
 
@@ -2454,8 +2634,8 @@ export default function App() {
       setShowSettings(true);
       setShowDiagnosticSection(true);
 
-      speakOutput(replyMsg);
-      setErrorNotice("⚛️ Initiating J.A.R.V.I.S. Self-Diagnostic Scan...");
+      speakOutput(speechText);
+      setErrorNotice(isKo ? "⚛️ J.A.R.V.I.S. 자가 진단 스캔 가동 중..." : "⚛️ Initiating J.A.R.V.I.S. Self-Diagnostic Scan...");
 
       // Start the diagnostic run
       runDiagnostics();
@@ -2558,11 +2738,7 @@ export default function App() {
       const isFemale = userGender === "female";
       const honorificKo = isFemale ? "의원님" : "주인님";
       
-      const injunVoice = availableVoices.find((v) => {
-        const nameLower = v.name.toLowerCase();
-        return v.lang.toLowerCase().startsWith("ko") && 
-               (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
-      }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+      const injunVoice = getBestKoVoice(availableVoices);
 
       if (injunVoice) {
         setSelectedBrowserVoice(injunVoice.name);
@@ -2591,7 +2767,7 @@ export default function App() {
         setErrorNotice("🎙️ J.A.R.V.I.S. voice upgraded to Microsoft Injun Online (Korean Male).");
         return;
       } else {
-        const fallbackVoice = availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+        const fallbackVoice = getBestKoVoice(availableVoices);
         if (fallbackVoice) {
           setSelectedBrowserVoice(fallbackVoice.name);
           setSpeechLanguage("ko-KR");
@@ -2624,11 +2800,7 @@ export default function App() {
       const isFemale = userGender === "female";
       const honorificKo = isFemale ? "의원님" : "주인님";
       
-      const koVoice = availableVoices.find((v) => {
-        const nameLower = v.name.toLowerCase();
-        return v.lang.toLowerCase().startsWith("ko") && 
-               (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
-      }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+      const koVoice = getBestKoVoice(availableVoices);
 
       if (koVoice) {
         setSelectedBrowserVoice(koVoice.name);
@@ -2993,46 +3165,7 @@ export default function App() {
         }
       } else {
         // Look for an actual, native Korean male voice in the browser list
-        const actualKoMale = availableVoices.find((v) => {
-          if (!v.lang.toLowerCase().startsWith("ko")) return false;
-          const nameLower = v.name.toLowerCase();
-          return (
-            nameLower.includes("male") ||
-            nameLower.includes("남성") ||
-            nameLower.includes("minsu") ||
-            nameLower.includes("민수") ||
-            nameLower.includes("junwoo") ||
-            nameLower.includes("준우") ||
-            nameLower.includes("chinho") ||
-            nameLower.includes("진호") ||
-            nameLower.includes("injun") ||
-            nameLower.includes("인준") ||
-            nameLower.includes("gildong") ||
-            nameLower.includes("길동") ||
-            nameLower.includes("himchan") ||
-            nameLower.includes("힘찬") ||
-            nameLower.includes("tae-hoon") ||
-            nameLower.includes("taehoon") ||
-            nameLower.includes("min-ho") ||
-            nameLower.includes("minho") ||
-            nameLower.includes("chul-soo") ||
-            nameLower.includes("chulsoo") ||
-            nameLower.includes("철수") ||
-            (nameLower.includes("han") && !nameLower.includes("hangul") && !nameLower.includes("hangeul") && !nameLower.includes("hannah")) ||
-            (nameLower.includes("한") && !nameLower.includes("한국어") && !nameLower.includes("대한민국")) ||
-            nameLower.includes("ism-local") ||
-            nameLower.includes("ism-network") ||
-            nameLower.includes("kdf-local") ||
-            nameLower.includes("kdf-network") ||
-            (nameLower.includes("siri") && (
-              nameLower.includes("남자") || 
-              nameLower.includes("male") || 
-              nameLower.includes("2") || 
-              nameLower.includes("3") || 
-              nameLower.includes("4")
-            ))
-          );
-        });
+        const actualKoMale = availableVoices.find((v) => isKoMaleVoice(v));
 
         if (actualKoMale) {
           // Native Korean male voice exists!
@@ -3053,7 +3186,7 @@ export default function App() {
           // No native Korean male voice exists on client system.
           // Fallback to the available Korean voice (usually female) but set an ULTRA-DEEP pitch (0.35 - 0.45)
           // to force a deep baritone sound, AND give clear system installation instructions.
-          const fallbackKo = availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+          const fallbackKo = getBestKoVoice(availableVoices);
           
           if (fallbackKo) {
             const targetPitch = isDeepRequested ? 0.35 : 0.45;
@@ -3272,7 +3405,7 @@ CRITICAL DIRECTIVE - EXCLUSIVE POLITE ENGLISH RESPONSES (MANDATORY & UNCOMPROMIS
 5. FAST & OPTIMIZED RESPONSES (CRITICAL): Keep both the [SPEECH: ...] block and the visual text beneath it concise, punchy, and highly optimized for speed (1 to 2 elegant sentences each). Avoid listing unnecessary Stark systems or adding long-winded paragraphs unless the operator explicitly requests deep diagnostics or detailed analyses. This minimizes response latency.
 `;
 
-      const systemInstructionText = `You are JARVIS (Just A Rather Very Intelligent System), the legendary AI assistant created by Tony Stark (Iron Man).
+    const systemInstructionText = `You are JARVIS (Just A Rather Very Intelligent System), the legendary AI assistant created by Tony Stark (Iron Man).
 Your personality is incredibly polite, British, brilliant, witty, calm, and loyal. You love to share witty British jokes, play along with high-tech humor, and exchange dry, charming banter with Mr. Stark or the operator.
 
 ${translationEngineDirective}
@@ -3310,7 +3443,7 @@ When the operator uploads or presents a picture:
 4. If translation mode is ON, translate the final analyzed insights to English, else adapt your language polite- gentleman style of response.
 
 ACCURACY & DEPTH OPTIMIZATION DIRECTIVE:
-Provide highly accurate, explanatory, and beautifully detailed responses. Elaborate comprehensively, thoroughly, and with complete information, rather than being overly brief or rushed. Deliver rich, sophisticated, and insightful explanations fitting for a stellar super-intelligence, maintaining your signature J.A.R.V.I.S. demeanor.
+Provide highly accurate, polite, and EXTREMELY BRIEF responses. Keep your answers under 1 short sentence (maximum 10-15 words) and highly punchy unless the operator explicitly requests deep technical diagrams or detailed code/blueprint analysis. Every extra word increases audio synthesis latency. Be incredibly snappy, fast, and witted.
 
 STARK MATHEMATICAL & PHYSICS SUBROUTINES DIRECTIVE:
 You possess complete master-level mathematical capability. When presented with mathematical formulas, algebraic equations, trigonometry, or calculus queries, you MUST:
@@ -3328,7 +3461,7 @@ When the operator provides any Python code or Pybricks code to analyze or simula
 4. If translation mode is ON or for bilingual responses, keep both the English SPEECH block and Korean text extremely short and focused only on the identified errors.
 5. You MUST still append the holographic simulation marker "[SIMULATE_SHOW: Pybricks Robot Simulation]" or "[SIMULATE_SHOW: Python Script Trace]" at the very end of your response so that the Stark holographic solver UI instantly triggers and projects onto the operator's display!
 
-Keep your output natural for a voice assistant—conversational, highly detailed, fully descriptive, and avoid excessive markdown formatting (like asterisks, bolding, bullet-lists, or HTML tags) unless absolutely necessary. Be sure to elaborate with charming details.
+Keep your output natural for a voice assistant—conversational, extremely brief (maximum 1 short sentence), and avoid excessive markdown formatting. Under no circumstances output lists, bullet points, or paragraphs unless explicitly asked, to guarantee ultra-low latency.
 Always address the user with supreme respect, using terms like '${honorific}' or referencing them as members of the Stark household (current operator name: ${nameInSpeech}). You are running at 100% capacity.
 
 Active Schedule Synchronization Array:
@@ -3380,7 +3513,7 @@ If the user asks you to simulate something, calculate a physical reaction, model
 
 Do not append any markers unless they are explicitly requesting to play a song, view a channel, locate a place, view photos, engage stealth mode, or run a physical simulation. Always keep replies polite, witty, warm, beautifully detailed, highly comprehensive, and professional.`;
 
-      let model = "gemini-3.1-flash-lite";
+      let model = "gemini-2.5-flash";
       let responseText = "";
 
       const makeRequest = async (selectedModel: string) => {
@@ -4229,21 +4362,11 @@ I can still map schedules, process identity registries, and synthesize local mic
                 <span className="text-cyan-500/70">AUDIBLE VOICE LEVEL:</span>
                 <div className="flex gap-1.5 text-[11px]">
                   <button
-                    onClick={() => setVoiceEngine("premium")}
-                    className={`px-2 py-1 rounded transition-all border ${
-                      voiceEngine === "premium"
-                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
-                        : "bg-transparent text-slate-500 border-slate-800"
-                    }`}
-                  >
-                    AI Premium
-                  </button>
-                  <button
                     onClick={() => setVoiceEngine("browser")}
                     className={`px-2 py-1 rounded transition-all border ${
                       voiceEngine === "browser"
-                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
-                        : "bg-transparent text-slate-500 border-slate-800"
+                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                        : "bg-transparent text-slate-500 border-slate-800 hover:text-cyan-400"
                     }`}
                   >
                     Local System
@@ -4252,8 +4375,8 @@ I can still map schedules, process identity registries, and synthesize local mic
                     onClick={() => setVoiceEngine("silent")}
                     className={`px-2 py-1 rounded transition-all border ${
                       voiceEngine === "silent"
-                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
-                        : "bg-transparent text-slate-500 border-slate-800"
+                        ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                        : "bg-transparent text-slate-500 border-slate-800 hover:text-cyan-400"
                     }`}
                   >
                     Muted
@@ -4267,57 +4390,12 @@ I can still map schedules, process identity registries, and synthesize local mic
                   type="button"
                   onClick={() => {
                     setVoiceEngine("browser");
-                    const koMale = availableVoices.find((v) => {
-                      if (!v.lang.toLowerCase().startsWith("ko")) return false;
-                      const nameLower = v.name.toLowerCase();
-                      return (
-                        nameLower.includes("male") ||
-                        nameLower.includes("남성") ||
-                        nameLower.includes("minsu") ||
-                        nameLower.includes("민수") ||
-                        nameLower.includes("junwoo") ||
-                        nameLower.includes("준우") ||
-                        nameLower.includes("chinho") ||
-                        nameLower.includes("진호") ||
-                        nameLower.includes("injun") ||
-                        nameLower.includes("인준") ||
-                        nameLower.includes("gildong") ||
-                        nameLower.includes("길동") ||
-                        nameLower.includes("himchan") ||
-                        nameLower.includes("힘찬") ||
-                        (nameLower.includes("siri") && (nameLower.includes("남자") || nameLower.includes("male")))
-                      );
-                    }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+                    const koMale = getBestKoVoice(availableVoices);
 
                     if (koMale) {
                       setSelectedBrowserVoice(koMale.name);
                       
-                      const isMale = 
-                        koMale.name.toLowerCase().includes("male") ||
-                        koMale.name.toLowerCase().includes("남성") ||
-                        koMale.name.toLowerCase().includes("minsu") ||
-                        koMale.name.toLowerCase().includes("민수") ||
-                        koMale.name.toLowerCase().includes("junwoo") ||
-                        koMale.name.toLowerCase().includes("준우") ||
-                        koMale.name.toLowerCase().includes("chinho") ||
-                        koMale.name.toLowerCase().includes("진호") ||
-                        koMale.name.toLowerCase().includes("injun") ||
-                        koMale.name.toLowerCase().includes("인준") ||
-                        koMale.name.toLowerCase().includes("gildong") ||
-                        koMale.name.toLowerCase().includes("길동") ||
-                        koMale.name.toLowerCase().includes("himchan") ||
-                        koMale.name.toLowerCase().includes("힘찬") ||
-                        koMale.name.toLowerCase().includes("tae-hoon") ||
-                        koMale.name.toLowerCase().includes("taehoon") ||
-                        koMale.name.toLowerCase().includes("min-ho") ||
-                        koMale.name.toLowerCase().includes("minho") ||
-                        (koMale.name.toLowerCase().includes("siri") && (
-                          koMale.name.toLowerCase().includes("남자") || 
-                          koMale.name.toLowerCase().includes("male") || 
-                          koMale.name.toLowerCase().includes("2") || 
-                          koMale.name.toLowerCase().includes("3") || 
-                          koMale.name.toLowerCase().includes("4")
-                        ));
+                      const isMale = isKoMaleVoice(koMale);
 
                       if (isMale) {
                         setBrowserPitch(0.85); // Deeper baritone voice (0.85 is dignified and natural)
@@ -4813,12 +4891,27 @@ I can still map schedules, process identity registries, and synthesize local mic
                               ) : (
                                 <div className="w-1.5 h-1.5 rounded-full bg-cyan-500/20 ring-2 ring-cyan-500/10 animate-pulse" />
                               )}
-                              <div className="space-y-0.5 select-text">
-                                <span className="text-[7px] font-mono font-bold text-cyan-500/60 tracking-[0.2em] uppercase block">
-                                  자비스 실시간 홀로그램 자막
-                                </span>
+                              <div className="space-y-1.5 select-text w-full">
+                                <div className="flex justify-between items-center w-full px-1 gap-2">
+                                  <span className="text-[7px] font-mono font-bold text-cyan-500/60 tracking-[0.2em] uppercase block">
+                                    자비스 실시간 홀로그램 자막
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setAutoTranslateSubtitles(!autoTranslateSubtitles);
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded text-[7px] font-mono border tracking-wider uppercase transition-all cursor-pointer ${
+                                      autoTranslateSubtitles 
+                                        ? "bg-cyan-500/15 text-cyan-400 border-cyan-500/35 hover:bg-cyan-500/25" 
+                                        : "bg-transparent text-slate-500 border-slate-800 hover:border-slate-700"
+                                    }`}
+                                  >
+                                    {autoTranslateSubtitles ? "KOR: ON" : "KOR: OFF"}
+                                  </button>
+                                </div>
                                 <p className="text-[11.5px] font-sans font-medium text-cyan-50 md:text-xs tracking-wide leading-relaxed filter drop-shadow-[0_0_6px_rgba(34,211,238,0.15)] max-h-[140px] overflow-y-auto pr-0.5 scrollbar-thin">
-                                  {lastMsg.text}
+                                  {autoTranslateSubtitles ? translateToKorean(lastMsg.text, userGender, userName) : lastMsg.text}
                                 </p>
                               </div>
                             </motion.div>
@@ -5043,11 +5136,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                             stopAllAudio();
                             setSpeechLanguage("ko-KR");
                             localStorage.setItem("jarvis_speech_lang", "ko-KR");
-                            const koVoice = availableVoices.find((v) => {
-                              const nameLower = v.name.toLowerCase();
-                              return v.lang.toLowerCase().startsWith("ko") && 
-                                     (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
-                            }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+                            const koVoice = getBestKoVoice(availableVoices);
                             if (koVoice) {
                               setSelectedBrowserVoice(koVoice.name);
                               setBrowserPitch(0.85);
@@ -5111,8 +5200,8 @@ I can still map schedules, process identity registries, and synthesize local mic
                     {/* Vocal Engine Toggle */}
                     <div className="space-y-2">
                       <label className="text-cyan-500/80 font-mono text-[10px]">SPEECH SYNTHESIS DRIVER:</label>
-                      <div className="grid grid-cols-3 gap-1">
-                        {(["premium", "browser", "silent"] as const).map((eng) => (
+                      <div className="grid grid-cols-2 gap-1">
+                        {(["browser", "silent"] as const).map((eng) => (
                           <button
                             key={eng}
                             onClick={() => {
@@ -5125,36 +5214,11 @@ I can still map schedules, process identity registries, and synthesize local mic
                                 : "bg-slate-950/40 text-slate-500 border-slate-800"
                             }`}
                           >
-                            {eng === "premium" ? "AI Premium" : eng === "browser" ? "Local Speech" : "Muted"}
+                            {eng === "browser" ? "Local Speech" : "Muted"}
                           </button>
                         ))}
                       </div>
                     </div>
-
-                    {voiceEngine === "premium" && (
-                      <div className="space-y-2 p-2 border border-cyan-500/10 bg-slate-950/50 rounded-lg">
-                        <div className="space-y-1">
-                          <label className="text-cyan-500/80 font-mono text-[9px] uppercase">PREMIUM NEURAL VOICE:</label>
-                          <select
-                            value={premiumVoiceName}
-                            onChange={(e) => {
-                              stopAllAudio();
-                              setPremiumVoiceName(e.target.value);
-                            }}
-                            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-cyan-100 text-[11px] outline-none focus:border-cyan-500/40 font-mono"
-                          >
-                            <option value="Puck">Puck (Energetic Male)</option>
-                            <option value="Charon">Charon (Deep Dignified Male)</option>
-                            <option value="Kore">Kore (Sophisticated Female)</option>
-                            <option value="Fenrir">Fenrir (Mysterious Deep Male)</option>
-                            <option value="Zephyr">Zephyr (Soft Modern Male)</option>
-                          </select>
-                        </div>
-                        <p className="text-[10px] text-slate-400 font-sans leading-normal">
-                          주인님, <strong>Premium TTS</strong>는 구글 제미나이의 다감각 음성 모델을 활용한 고품질 인공지능 보이스입니다. 대기 시간(Latency)이 발생할 수 있지만, 가장 자연스럽고 세련된 목소리로 답변해 드립니다.
-                        </p>
-                      </div>
-                    )}
 
                     {voiceEngine === "browser" && (
                       /* Local system browser speech selectors with depth customizing sliders */
@@ -5179,6 +5243,27 @@ I can still map schedules, process identity registries, and synthesize local mic
                               ))
                             )}
                           </select>
+                          
+                          {(() => {
+                            const activeVoice = availableVoices.find(v => v.name === selectedBrowserVoice);
+                            const isKoreanSelected = activeVoice ? activeVoice.lang.toLowerCase().startsWith("ko") : speechLanguage === "ko-KR";
+                            const isSelectedVoiceMale = activeVoice ? isKoMaleVoice(activeVoice) : false;
+                            
+                            if (isKoreanSelected && !isSelectedVoiceMale) {
+                              return (
+                                <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded text-[10px] text-amber-300 leading-normal space-y-1 mt-1 font-sans">
+                                  <p className="font-bold">⚠️ 한국어 남성 음성팩 미설치 안내</p>
+                                  <p>현재 기기에 한국어 남성 음성(인준, 민수 등)이 발견되지 않아 기본 여성 음성이 활성화되었습니다.</p>
+                                  <p>자비스 본연의 남성 목소리를 사용하시려면:</p>
+                                  <ul className="list-disc pl-3.5 space-y-0.5 text-slate-400 text-[9px]">
+                                    <li>아래 <strong>🇬🇧 J.A.R.V.I.S. (UK)</strong> 프리셋을 클릭해 자비스 본연의 영국식 남성 목소리를 활성화해 보세요. 한국어 답변도 고유의 멋진 억양과 남성 발음으로 출력됩니다!</li>
+                                    <li>또는 사용 중인 기기(Windows/Mac/Android/iOS) 설정에서 '한국어 남성 음성팩'을 설치해 주세요.</li>
+                                  </ul>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 pt-0.5">
@@ -5213,11 +5298,7 @@ I can still map schedules, process identity registries, and synthesize local mic
                             type="button"
                             onClick={() => {
                               stopAllAudio();
-                              const injunVoice = availableVoices.find((v) => {
-                                const nameLower = v.name.toLowerCase();
-                                return v.lang.toLowerCase().startsWith("ko") && 
-                                       (nameLower.includes("injun") || nameLower.includes("인준") || nameLower.includes("male") || nameLower.includes("남성") || nameLower.includes("minsu") || nameLower.includes("민수") || nameLower.includes("junwoo") || nameLower.includes("준우"));
-                              }) || availableVoices.find((v) => v.lang.toLowerCase().startsWith("ko"));
+                              const injunVoice = getBestKoVoice(availableVoices);
 
                               if (injunVoice) {
                                 setSelectedBrowserVoice(injunVoice.name);

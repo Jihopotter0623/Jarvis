@@ -255,71 +255,92 @@ export function speakWithBrowser(
       }
     } else {
       const koreanVoices = voices.filter((v) => v.lang.toLowerCase().startsWith("ko"));
-      // Try to find a male voice first with an extensive keyword list
+      
+      // 1. Prioritize Injun voice specifically (excluding any female match just in case)
       selectedVoice = koreanVoices.find((v) => {
         const nameLower = v.name.toLowerCase();
+        const uriLower = (v.voiceURI || "").toLowerCase();
+        if (nameLower.includes("heami") || nameLower.includes("혜미") || uriLower.includes("heami") || uriLower.includes("혜미")) {
+          return false;
+        }
         return (
-          nameLower.includes("male") ||
-          nameLower.includes("남성") ||
-          nameLower.includes("minsu") ||
-          nameLower.includes("민수") ||
-          nameLower.includes("junwoo") ||
-          nameLower.includes("준우") ||
-          nameLower.includes("chinho") ||
-          nameLower.includes("진호") ||
           nameLower.includes("injun") ||
+          uriLower.includes("injun") ||
           nameLower.includes("인준") ||
-          nameLower.includes("gildong") ||
-          nameLower.includes("길동") ||
-          nameLower.includes("himchan") ||
-          nameLower.includes("힘찬") ||
-          nameLower.includes("tae-hoon") ||
-          nameLower.includes("taehoon") ||
-          nameLower.includes("min-ho") ||
-          nameLower.includes("minho") ||
-          nameLower.includes("chul-soo") ||
-          nameLower.includes("chulsoo") ||
-          nameLower.includes("철수") ||
-          (nameLower.includes("han") && !nameLower.includes("hangul") && !nameLower.includes("hangeul") && !nameLower.includes("hannah")) ||
-          (nameLower.includes("한") && !nameLower.includes("한국어") && !nameLower.includes("대한민국")) ||
-          nameLower.includes("ism-local") ||
-          nameLower.includes("ism-network") ||
-          nameLower.includes("kdf-local") ||
-          nameLower.includes("kdf-network") ||
-          (nameLower.includes("siri") && (
-            nameLower.includes("남자") || 
-            nameLower.includes("male") || 
-            nameLower.includes("2") || 
-            nameLower.includes("3") || 
-            nameLower.includes("4")
-          ))
+          uriLower.includes("인준")
         );
       });
 
-      // If no male-specific matching voice, select a voice excluding obvious female names
+      // 2. Try to find other male voices with extensive matching
       if (!selectedVoice) {
         selectedVoice = koreanVoices.find((v) => {
           const nameLower = v.name.toLowerCase();
-          return !nameLower.includes("female") && 
-                 !nameLower.includes("여성") && 
-                 !nameLower.includes("heami") && 
-                 !nameLower.includes("혜미") && 
-                 !nameLower.includes("yuna") && 
-                 !nameLower.includes("유나") && 
-                 !nameLower.includes("suna") && 
-                 !nameLower.includes("선아") && 
-                 !nameLower.includes("seoyeon") && 
-                 !nameLower.includes("서연") &&
-                 !nameLower.includes("suri") &&
-                 !nameLower.includes("수리") &&
-                 !nameLower.includes("yuri") &&
-                 !nameLower.includes("유리") &&
-                 !nameLower.includes("sujin") &&
-                 !nameLower.includes("수진");
+          const uriLower = (v.voiceURI || "").toLowerCase();
+          
+          // Reject obvious female voices
+          const femaleKeywords = [
+            "female", "여성", "heami", "혜미", "yumi", "유미", "yuna", "유나", 
+            "seoyeon", "서연", "suna", "선아", "suri", "수리", "yuri", "유리", 
+            "sujin", "수진", "hyeryun", "혜련", "subin", "수빈", "sunhee", 
+            "sun-hee", "선희", "jimin", "ji-min", "지민", "bora", "보라", "hana", "하나"
+          ];
+          if (femaleKeywords.some(kw => nameLower.includes(kw) || uriLower.includes(kw))) {
+            return false;
+          }
+          
+          return (
+            nameLower.includes("male") ||
+            nameLower.includes("남성") ||
+            nameLower.includes("minsu") ||
+            nameLower.includes("민수") ||
+            nameLower.includes("junwoo") ||
+            nameLower.includes("준우") ||
+            nameLower.includes("chinho") ||
+            nameLower.includes("진호") ||
+            nameLower.includes("gildong") ||
+            nameLower.includes("길동") ||
+            nameLower.includes("himchan") ||
+            nameLower.includes("힘찬") ||
+            nameLower.includes("tae-hoon") ||
+            nameLower.includes("taehoon") ||
+            nameLower.includes("min-ho") ||
+            nameLower.includes("minho") ||
+            nameLower.includes("chul-soo") ||
+            nameLower.includes("chulsoo") ||
+            nameLower.includes("철수") ||
+            (nameLower.includes("han") && !nameLower.includes("hangul") && !nameLower.includes("hangeul") && !nameLower.includes("hannah")) ||
+            (nameLower.includes("한") && !nameLower.includes("한국어") && !nameLower.includes("대한민국")) ||
+            nameLower.includes("ism-local") ||
+            nameLower.includes("ism-network") ||
+            nameLower.includes("kdf-local") ||
+            nameLower.includes("kdf-network") ||
+            (nameLower.includes("siri") && (
+              nameLower.includes("남자") || 
+              nameLower.includes("male") || 
+              nameLower.includes("2") || 
+              nameLower.includes("3") || 
+              nameLower.includes("4")
+            ))
+          );
         });
       }
 
-      // Fallback to the first available Korean voice
+      // 3. If no male-specific matching voice, select a voice excluding obvious female names
+      if (!selectedVoice) {
+        selectedVoice = koreanVoices.find((v) => {
+          const nameLower = v.name.toLowerCase();
+          const uriLower = (v.voiceURI || "").toLowerCase();
+          const femaleKeywords = [
+            "female", "여성", "heami", "혜미", "yumi", "유미", "yuna", "유나", 
+            "seoyeon", "서연", "suna", "선아", "suri", "수리", "yuri", "유리", 
+            "sujin", "수진", "hyeryun", "혜련", "subin", "수빈", "sunhee", 
+            "sun-hee", "선희", "jimin", "ji-min", "지민", "bora", "보라", "hana", "하나"
+          ];
+          return !femaleKeywords.some(kw => nameLower.includes(kw) || uriLower.includes(kw));
+        });
+      }
+
+      // 4. Fallback to the first available Korean voice
       if (!selectedVoice) {
         selectedVoice = koreanVoices[0];
       }
